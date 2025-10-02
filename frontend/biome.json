@@ -1,6 +1,0 @@
-{
-    "$schema": "https://biomejs.dev/schemas/1.8.3/schema.json",
-    "files": { "ignore": ["dist", "build", "node_modules"] },
-    "linter": { "enabled": true, "rules": { "recommended": true } },
-    "formatter": { "enabled": true, "lineWidth": 100 }
-}

@@ -13,40 +13,12 @@ RL training pipeline using python / pytorch
 pip install backend
 ```
 
-## Quick Start
-
-### Python API
-
-```python
-from backend.main import hello_world
-
-# Basic usage
-result = hello_world()
-print(result)  # "Hello from backend!"
-
-# With a name
-result = hello_world("Alice")
-print(result)  # "Hello, Alice, from backend!"
-```
-
-### Command Line
-
-```bash
-python -m backend
-```
-
-## Development
-
 ### Setup
-
-1. Clone the repository:
-```bash
-git clone https://github.com/erenovic/backend.git
-cd backend
-```
 
 2. Set up development environment:
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 make all  # Install dependencies, pre-commit hooks, and run all checks
 ```
 

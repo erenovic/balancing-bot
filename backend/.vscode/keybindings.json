@@ -1,5 +1,0 @@
-{
-    "key": "cmd+shift+r",
-    "command": "ruff.applyAutofix",
-    "when": "editorLangId == python"
-}
