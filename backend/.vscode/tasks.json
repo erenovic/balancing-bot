@@ -1,0 +1,9 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        { "label": "lint", "type": "shell", "command": "ruff check ." },
+        { "label": "format", "type": "shell", "command": "ruff format ." },
+        { "label": "typecheck", "type": "shell", "command": "mypy ." },
+        { "label": "test", "type": "shell", "command": "pytest -q" }
+    ]
+}
