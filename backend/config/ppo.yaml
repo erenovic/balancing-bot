@@ -1,0 +1,15 @@
+algorithm:
+  name: ppo
+  rollout_length: 20
+
+trainer:
+  num_steps: 1000
+  learning_rate: 0.001
+
+environment: CartPole-v1
+
+seed: 42
+
+logger:
+  type: wandb
+  mode: offline  # online, offline, or disabled
