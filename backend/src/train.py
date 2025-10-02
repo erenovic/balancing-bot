@@ -54,6 +54,10 @@ def main(config: DictConfig):
 
     # Create environment
     environment: gym.Env = NumpyToTorch(gym.make(config.environment.name, render_mode="rgb_array"))
+
+    # Cart-Pole-v1 state space size is 4:
+    # [cart position, cart velocity, pole angle, pole velocity at tip]
+
     logger.info(f"Environment: {config.environment}")
 
     # Create algorithm
