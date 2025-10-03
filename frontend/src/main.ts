@@ -1,11 +1,15 @@
 import * as THREE from "three";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import * as ort from "onnxruntime-web";
+
+const POLICY_MODEL_URL = "/models/policy_model_best.onnx";
+const ORT_WASM_BASE_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/";
 
 interface CartPoleState {
-	x: number;
-	xDot: number;
-	theta: number;
-	thetaDot: number;
+	x: number;          // Cart position
+	xDot: number;       // Cart velocity
+	theta: number;      // Pole angle
+	thetaDot: number;   // Pole velocity at tip
 }
 
 class CartPoleVisual {
@@ -17,18 +21,20 @@ class CartPoleVisual {
   private readonly cartHeight = 0.25;
   private readonly cartDepth = 0.4;
   private readonly railThickness = 0.05;
+  private readonly trackLength = 10.0;
+  private readonly poleLength = 1.0;
 
-	constructor(scene: THREE.Scene, options: { trackLength: number; poleLength: number }) {
+	constructor(scene: THREE.Scene) {
 		this.root = new THREE.Group();
-		this.trackHalfLength = options.trackLength / 2;
+		this.trackHalfLength = this.trackLength / 2;
 
 		// Rail spanning the track
-		const railGeometry = new THREE.BoxGeometry(options.trackLength, this.railThickness, this.cartDepth * 1.2);
+		const railGeometry = new THREE.BoxGeometry(this.trackLength, this.railThickness, this.cartDepth * 1.2);
 		const railMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
 		const railMesh = new THREE.Mesh(railGeometry, railMaterial);
 		railMesh.position.y = -this.cartHeight * 0.5 - this.railThickness * 0.5;
 		railMesh.receiveShadow = true;
-		this.root.add(railMesh);
+		scene.add(railMesh);
 
 		// Cart body
 		const cartGeometry = new THREE.BoxGeometry(this.cartWidth, this.cartHeight, this.cartDepth);
@@ -42,11 +48,11 @@ class CartPoleVisual {
 		this.polePivot.position.y = this.cartHeight * 0.5;
 		this.root.add(this.polePivot);
 
-		const poleGeometry = new THREE.BoxGeometry(0.05, options.poleLength, 0.05);
+		const poleGeometry = new THREE.BoxGeometry(0.05, this.poleLength, 0.05);
 		const poleMaterial = new THREE.MeshStandardMaterial({ color: 0xffa000 });
 		const poleMesh = new THREE.Mesh(poleGeometry, poleMaterial);
 		poleMesh.castShadow = true;
-		poleMesh.position.y = options.poleLength * 0.5;
+		poleMesh.position.y = this.poleLength * 0.5;
 		this.polePivot.add(poleMesh);
 
 		// Wheels for a bit of depth perception
@@ -75,61 +81,161 @@ class CartPoleVisual {
 }
 
 class CartPoleSimulator {
-	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0.15, thetaDot: 0 };
-	private readonly gravity = 9.81;
+	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0.05, thetaDot: 0 };
+	private readonly gravity = 9.8;
 	private readonly massCart = 1.0;
 	private readonly massPole = 0.1;
-	private readonly poleLength = 0.5;
-	private readonly maxTrackPosition = 1.2;
+	private readonly totalMass = this.massCart + this.massPole;
+	private readonly halfPoleLength = 0.5; // Gym's "length" parameter (half pole length)
+	private readonly poleMassLength = this.massPole * this.halfPoleLength;
+	private readonly forceMag = 100.0;
+	private readonly tau = 0.02;
+	private accumulator = 0;
+	private appliedForce = 0;
 
-	public step(dt: number): CartPoleState {
-		const { xDot, theta, thetaDot } = this.state;
-
-		const force = this.controllerForce();
-		const totalMass = this.massCart + this.massPole;
-		const poleMassLength = this.massPole * this.poleLength;
-		const sinTheta = Math.sin(theta);
-		const cosTheta = Math.cos(theta);
-		const temp = (force + poleMassLength * thetaDot * thetaDot * sinTheta) / totalMass;
-		const thetaAccNumerator = this.gravity * sinTheta - cosTheta * temp;
-		const thetaAccDenominator = this.poleLength * (4 / 3 - (this.massPole * cosTheta * cosTheta) / totalMass);
-		const thetaAcc = thetaAccNumerator / thetaAccDenominator;
-		const xAcc = temp - (poleMassLength * thetaAcc * cosTheta) / totalMass;
-
-		this.state.x += xDot * dt;
-		this.state.xDot += xAcc * dt;
-		this.state.theta += thetaDot * dt;
-		this.state.thetaDot += thetaAcc * dt;
-
-		// Keep the cart within the track visually
-		if (this.state.x > this.maxTrackPosition) {
-			this.state.x = this.maxTrackPosition;
-			this.state.xDot *= -0.4;
+	public advance(dt: number): CartPoleState {
+		this.accumulator += dt;
+		while (this.accumulator >= this.tau) {
+			this.integrateStep();
+			this.accumulator -= this.tau;
 		}
-		if (this.state.x < -this.maxTrackPosition) {
-			this.state.x = -this.maxTrackPosition;
-			this.state.xDot *= -0.4;
-		}
-
 		return { ...this.state };
+	}
+
+	public setForce(force: number): void {
+		this.appliedForce = THREE.MathUtils.clamp(force, -this.forceMag, this.forceMag);
+	}
+
+	public getForceMagnitude(): number {
+		return this.forceMag;
 	}
 
 	public getState(): CartPoleState {
 		return { ...this.state };
 	}
 
-	public setExternalState(state: CartPoleState): void {
-		Object.assign(this.state, state);
+	public reset(state?: Partial<CartPoleState>): void {
+		this.state.x = state?.x ?? 0;
+		this.state.xDot = state?.xDot ?? 0;
+		this.state.theta = state?.theta ?? THREE.MathUtils.randFloatSpread(0.1);
+		this.state.thetaDot = state?.thetaDot ?? 0;
+		this.accumulator = 0;
 	}
 
-	private controllerForce(): number {
-		// Simple stabilising controller so the visual stays interesting
-		const kpTheta = 120;
-		const kdTheta = 25;
-		const kpX = 30;
-		const kdX = 10;
-		const force = -kpTheta * this.state.theta - kdTheta * this.state.thetaDot - kpX * this.state.x - kdX * this.state.xDot;
-		return THREE.MathUtils.clamp(force, -10, 10);
+	private integrateStep(): void {
+		const { x, xDot, theta, thetaDot } = this.state;
+		const sinTheta = Math.sin(theta);
+		const cosTheta = Math.cos(theta);
+		const temp = (this.appliedForce + this.poleMassLength * thetaDot * thetaDot * sinTheta) / this.totalMass;
+		const thetaAcc = (this.gravity * sinTheta - cosTheta * temp) / (
+			this.halfPoleLength * (4 / 3 - (this.massPole * cosTheta * cosTheta) / this.totalMass)
+		);
+		const xAcc = temp - (this.poleMassLength * thetaAcc * cosTheta) / this.totalMass;
+
+		this.state.x = x + this.tau * xDot;
+		this.state.xDot = xDot + this.tau * xAcc;
+		this.state.theta = theta + this.tau * thetaDot;
+		this.state.thetaDot = thetaDot + this.tau * thetaAcc;
+	}
+}
+
+class PolicyRunner {
+	private session?: ort.InferenceSession;
+	private readonly modelUrl: string;
+	private initializationPromise?: Promise<void>;
+	private busy = false;
+
+	constructor(modelUrl: string) {
+		this.modelUrl = modelUrl;
+	}
+
+	public async init(): Promise<void> {
+		if (this.session) {
+			return;
+		}
+		if (!this.initializationPromise) {
+			this.initializationPromise = ort.InferenceSession.create(this.modelUrl, {
+				executionProviders: ["wasm"],
+			})
+				.then((session) => {
+					this.session = session;
+				})
+				.catch((error) => {
+					console.error(`Failed to load policy model from ${this.modelUrl}`, error);
+					throw error;
+				})
+				.finally(() => {
+					this.initializationPromise = undefined;
+				});
+		}
+		await this.initializationPromise;
+	}
+
+	public isReady(): boolean {
+		return Boolean(this.session);
+	}
+
+	public isBusy(): boolean {
+		return this.busy;
+	}
+
+	public async predictForce(state: CartPoleState, forceMagnitude: number): Promise<number> {
+		if (!this.session) {
+			throw new Error("Policy session is not initialized");
+		}
+		if (this.busy) {
+			throw new Error("Policy inference already in progress");
+		}
+
+		this.busy = true;
+		try {
+			const inputName = this.session.inputNames[0];
+			const outputName = this.session.outputNames[0];
+			if (!inputName || !outputName) {
+				throw new Error("Policy model input or output names are missing");
+			}
+
+			const inputData = new Float32Array([state.x, state.xDot, state.theta, state.thetaDot]);
+			const inputTensor = new ort.Tensor("float32", inputData, [inputData.length]);
+			const feeds: Record<string, ort.Tensor> = { [inputName]: inputTensor };
+			const results = await this.session.run(feeds);
+			const outputTensor = results[outputName];
+			if (!outputTensor) {
+				throw new Error(`Policy model output "${outputName}" not found`);
+			}
+
+			const dataArray = outputTensor.data as Float32Array | number[];
+			if (dataArray.length === 0) {
+				throw new Error("Policy model returned empty output");
+			}
+
+			let force: number;
+			if (dataArray.length === 1) {
+				const rawForce = Number(dataArray[0]);
+				force = THREE.MathUtils.clamp(rawForce, -forceMagnitude, forceMagnitude);
+			} else {
+				let bestIndex = 0;
+				let bestValue = Number(dataArray[0]);
+				for (let i = 1; i < dataArray.length; i += 1) {
+					const candidate = Number(dataArray[i]);
+					if (candidate > bestValue) {
+						bestValue = candidate;
+						bestIndex = i;
+					}
+				}
+
+				if (dataArray.length === 2) {
+					force = bestIndex === 0 ? -forceMagnitude : forceMagnitude;
+				} else {
+					const normalized = (bestIndex / (dataArray.length - 1)) * 2 - 1;
+					force = THREE.MathUtils.clamp(normalized * forceMagnitude, -forceMagnitude, forceMagnitude);
+				}
+			}
+
+			return force;
+		} finally {
+			this.busy = false;
+		}
 	}
 }
 
@@ -141,8 +247,10 @@ export class ThreeJSApp {
 	private readonly clock: THREE.Clock = new THREE.Clock();
 	private readonly cartPoleVisual: CartPoleVisual;
 	private readonly simulator: CartPoleSimulator;
+	private policyRunner?: PolicyRunner;
+	private policyActionPending = false;
 
-	constructor(canvas: HTMLCanvasElement) {
+	constructor(canvas: HTMLCanvasElement, options?: { modelUrl?: string }) {
 		this.scene = new THREE.Scene();
 		this.scene.background = new THREE.Color(0xf1f3f6);
 
@@ -165,10 +273,50 @@ export class ThreeJSApp {
 		this.scene.add(new THREE.AxesHelper(1.5));
 
 		this.simulator = new CartPoleSimulator();
-		this.cartPoleVisual = new CartPoleVisual(this.scene, { trackLength: 2.4, poleLength: 1.0 });
+		this.simulator.setForce(0);
+		this.cartPoleVisual = new CartPoleVisual(this.scene);
+		if (options?.modelUrl) {
+			this.initializePolicy(options.modelUrl);
+		}
 
 		this.setupEventListeners();
 		this.animate();
+	}
+
+	private initializePolicy(modelUrl: string): void {
+		if (!ort.env.wasm.wasmPaths) {
+			ort.env.wasm.wasmPaths = ORT_WASM_BASE_URL;
+		}
+		const runner = new PolicyRunner(modelUrl);
+		this.policyRunner = runner;
+		runner
+			.init()
+			.then(() => {
+				console.info(`[Policy] Loaded ONNX model from ${modelUrl}`);
+			})
+			.catch((error) => {
+				console.error("Failed to initialise policy runner", error);
+				this.policyRunner = undefined;
+			});
+	}
+
+	private requestPolicyAction(state: CartPoleState): void {
+		if (!this.policyRunner || !this.policyRunner.isReady() || this.policyRunner.isBusy() || this.policyActionPending) {
+			return;
+		}
+
+		this.policyActionPending = true;
+		this.policyRunner
+			.predictForce(state, this.simulator.getForceMagnitude())
+			.then((force) => {
+				this.simulator.setForce(force);
+			})
+			.catch((error) => {
+				console.error("Policy inference failed", error);
+			})
+			.finally(() => {
+				this.policyActionPending = false;
+			});
 	}
 
 	private addLights(): void {
@@ -188,15 +336,15 @@ export class ThreeJSApp {
 	}
 
 	private addGround(): void {
-		const groundGeometry = new THREE.PlaneGeometry(20, 20);
-		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0 });
+		const groundGeometry = new THREE.PlaneGeometry(20, 6);
+		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, opacity: 0.3, transparent: true });
 		const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
 		groundMesh.rotation.x = -Math.PI / 2;
 		groundMesh.position.y = -0.18;
 		groundMesh.receiveShadow = true;
 		this.scene.add(groundMesh);
 
-		const gridHelper = new THREE.GridHelper(20, 40, 0x888888, 0xdddddd);
+		const gridHelper = new THREE.GridHelper(6, 40, 0x888888, 0xdddddd);
 		gridHelper.position.y = -0.179;
 		this.scene.add(gridHelper);
 	}
@@ -217,8 +365,9 @@ export class ThreeJSApp {
 
 	private animate = (): void => {
 		const delta = this.clock.getDelta();
-		const state = this.simulator.step(delta);
+		const state = this.simulator.advance(delta);
 		this.cartPoleVisual.update(state);
+		this.requestPolicyAction(state);
 
 		this.controls.update();
 		this.renderer.render(this.scene, this.camera);
@@ -242,5 +391,5 @@ document.addEventListener("DOMContentLoaded", () => {
 	}
 
 	// eslint-disable-next-line no-new
-	new ThreeJSApp(canvas);
+	new ThreeJSApp(canvas, { modelUrl: POLICY_MODEL_URL });
 });
