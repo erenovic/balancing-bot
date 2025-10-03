@@ -47,11 +47,11 @@ class REINFORCE:
         policy_losses = []
         value_losses = []
 
-        for (log_prob, value, _, _), Rn in zip(self.rollouts, returns_t, strict=True):
+        for (log_prob, value, _, _), return_t in zip(self.rollouts, returns_t, strict=True):
             # Advantage using baseline
-            advantage = Rn - value.detach()
+            advantage = return_t - value.detach()
             policy_losses.append(-log_prob * advantage)
-            value_losses.append(smooth_l1_loss(value, Rn))
+            value_losses.append(smooth_l1_loss(value, return_t))
 
         loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
         optimizer.zero_grad()

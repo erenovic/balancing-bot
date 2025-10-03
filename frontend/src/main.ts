@@ -1,16 +1,20 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as ort from "onnxruntime-web";
+import config from "./config";
 import { createAGrid } from "./utils";
-
-const POLICY_MODEL_URL = "/models/policy_model_best.onnx";
-const ORT_WASM_BASE_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/";
 
 interface CartPoleState {
 	x: number;          // Cart position
 	xDot: number;       // Cart velocity
 	theta: number;      // Pole angle
 	thetaDot: number;   // Pole velocity at tip
+}
+
+interface ThreeJSAppOptions {
+	modelUrl?: string;
+	ortWasmBaseUrl?: string;
+	manualPushStrength?: number;
 }
 
 class CartPoleVisual {
@@ -372,8 +376,30 @@ export class ThreeJSApp {
 	private readonly cartWorldPosition: THREE.Vector3 = new THREE.Vector3();
 	private policyRunner?: PolicyRunner;
 	private policyActionPending = false;
+	private readonly ortWasmBaseUrl: string;
+	private readonly manualPushStrength: number;
+	private readonly nudgeCooldownMs = 1000;
+	private leftNudgeButton?: HTMLButtonElement;
+	private rightNudgeButton?: HTMLButtonElement;
+	private leftNudgePointerHandler?: (event: PointerEvent) => void;
+	private rightNudgePointerHandler?: (event: PointerEvent) => void;
+	private leftNudgeClickHandler?: (event: MouseEvent) => void;
+	private rightNudgeClickHandler?: (event: MouseEvent) => void;
+	private swallowClickHandler?: (event: MouseEvent) => void;
+	private readonly supportsPointerEvents = typeof window !== "undefined" && window.PointerEvent !== undefined;
+	private readonly buttonCooldowns = new Map<HTMLButtonElement, number>();
+	private readonly trackAxis: THREE.Vector3 = new THREE.Vector3(1, 0, 0);
+	private readonly tmpCameraForward: THREE.Vector3 = new THREE.Vector3();
+	private readonly tmpCameraRight: THREE.Vector3 = new THREE.Vector3();
 
-	constructor(canvas: HTMLCanvasElement, options?: { modelUrl?: string }) {
+	constructor(canvas: HTMLCanvasElement, options?: ThreeJSAppOptions) {
+		const resolvedModelUrl = options?.modelUrl ?? config.policy.modelUrl;
+		const resolvedWasmBaseUrl = options?.ortWasmBaseUrl ?? config.onnxRuntime.wasmBaseUrl;
+		const resolvedManualPushStrength = options?.manualPushStrength ?? config.controls.manualPushStrength;
+
+		this.ortWasmBaseUrl = resolvedWasmBaseUrl;
+		this.manualPushStrength = resolvedManualPushStrength;
+
 		this.scene = new THREE.Scene();
 		this.scene.background = new THREE.Color(0xf1f3f6);
 
@@ -396,22 +422,24 @@ export class ThreeJSApp {
 		this.simulator = new CartPoleSimulator();
 		this.simulator.setForce(0);
 		this.cartPoleVisual = new CartPoleVisual(this.scene);
-		if (options?.modelUrl) {
-			this.initializePolicy(options.modelUrl);
+
+		if (resolvedModelUrl) {
+			this.initializePolicy(resolvedModelUrl);
 		}
 
-    this.addLights();
+		this.addLights();
 		this.addGround();
 		this.addFog();
-		this.scene.add(new THREE.AxesHelper(1.5));
+		// this.scene.add(new THREE.AxesHelper(1.5));
 
 		this.setupEventListeners();
+		this.setupOnScreenControls();
 		this.animate();
 	}
 
 	private initializePolicy(modelUrl: string): void {
 		if (!ort.env.wasm.wasmPaths) {
-			ort.env.wasm.wasmPaths = ORT_WASM_BASE_URL;
+			ort.env.wasm.wasmPaths = this.ortWasmBaseUrl;
 		}
 		const runner = new PolicyRunner(modelUrl);
 		this.policyRunner = runner;
@@ -475,13 +503,125 @@ export class ThreeJSApp {
 		this.scene.add(gridHelper);
 	}
 
-  private addFog(): void {
-    this.scene.fog = new THREE.Fog(0xf1f3f6, 1, 15);
-  }
+	private addFog(): void {
+		this.scene.fog = new THREE.Fog(0xf1f3f6, 1, 15);
+	}
 
 	private setupEventListeners(): void {
 		window.addEventListener("resize", this.onWindowResize);
 		window.addEventListener("keydown", this.onKeyDown);
+	}
+
+	private setupOnScreenControls(): void {
+		const leftButton = document.querySelector<HTMLButtonElement>("[data-nudge='left']");
+		const rightButton = document.querySelector<HTMLButtonElement>("[data-nudge='right']");
+		if (!leftButton || !rightButton) {
+			return;
+		}
+
+		this.leftNudgeButton = leftButton;
+		this.rightNudgeButton = rightButton;
+
+		if (this.supportsPointerEvents) {
+			this.swallowClickHandler = (event: MouseEvent) => {
+				event.preventDefault();
+			};
+
+			this.leftNudgePointerHandler = (event: PointerEvent) => {
+				event.preventDefault();
+				if (!(event.currentTarget instanceof HTMLButtonElement)) {
+					return;
+				}
+				const button = event.currentTarget;
+				if (button.disabled) {
+					return;
+				}
+				button.blur();
+				this.handleNudge(-1, button);
+			};
+			this.rightNudgePointerHandler = (event: PointerEvent) => {
+				event.preventDefault();
+				if (!(event.currentTarget instanceof HTMLButtonElement)) {
+					return;
+				}
+				const button = event.currentTarget;
+				if (button.disabled) {
+					return;
+				}
+				button.blur();
+				this.handleNudge(1, button);
+			};
+
+			leftButton.addEventListener("pointerdown", this.leftNudgePointerHandler);
+			rightButton.addEventListener("pointerdown", this.rightNudgePointerHandler);
+			if (this.swallowClickHandler) {
+				leftButton.addEventListener("click", this.swallowClickHandler);
+				rightButton.addEventListener("click", this.swallowClickHandler);
+			}
+		} else {
+			this.leftNudgeClickHandler = (event: MouseEvent) => {
+				event.preventDefault();
+				if (!(event.currentTarget instanceof HTMLButtonElement)) {
+					return;
+				}
+				const button = event.currentTarget;
+				if (button.disabled) {
+					return;
+				}
+				button.blur();
+				this.handleNudge(-1, button);
+			};
+			this.rightNudgeClickHandler = (event: MouseEvent) => {
+				event.preventDefault();
+				if (!(event.currentTarget instanceof HTMLButtonElement)) {
+					return;
+				}
+				const button = event.currentTarget;
+				if (button.disabled) {
+					return;
+				}
+				button.blur();
+				this.handleNudge(1, button);
+			};
+
+			leftButton.addEventListener("click", this.leftNudgeClickHandler);
+			rightButton.addEventListener("click", this.rightNudgeClickHandler);
+		}
+	}
+
+	private handleNudge(baseDirection: -1 | 1, sourceButton?: HTMLButtonElement): void {
+		const worldDirection = this.computeCameraRelativeDirection(baseDirection);
+		this.simulator.nudgePole(worldDirection, this.manualPushStrength);
+		this.cartPoleVisual.showPushIndicator(worldDirection, this.manualPushStrength);
+		if (sourceButton) {
+			this.beginButtonCooldown(sourceButton);
+		}
+	}
+
+	private beginButtonCooldown(button: HTMLButtonElement): void {
+		button.disabled = true;
+		button.classList.add("is-disabled");
+		const existingTimer = this.buttonCooldowns.get(button);
+		if (existingTimer !== undefined) {
+			window.clearTimeout(existingTimer);
+		}
+		const timeoutId = window.setTimeout(() => {
+			button.disabled = false;
+			button.classList.remove("is-disabled");
+			this.buttonCooldowns.delete(button);
+		}, this.nudgeCooldownMs);
+		this.buttonCooldowns.set(button, timeoutId);
+	}
+
+	private computeCameraRelativeDirection(baseDirection: -1 | 1): number {
+		this.camera.getWorldDirection(this.tmpCameraForward);
+		this.tmpCameraRight.crossVectors(this.tmpCameraForward, this.camera.up).normalize();
+		const alignment = this.tmpCameraRight.dot(this.trackAxis);
+		if (!Number.isFinite(alignment) || alignment === 0) {
+			return baseDirection;
+		}
+		const cameraRightSign = Math.sign(alignment) || 1;
+		return baseDirection * cameraRightSign;
 	}
 
 	private onWindowResize = (): void => {
@@ -497,8 +637,7 @@ export class ThreeJSApp {
 				return;
 			}
 			const direction = event.key === "ArrowLeft" ? -1 : 1;
-			this.simulator.nudgePole(direction);
-			this.cartPoleVisual.showPushIndicator(direction);
+			this.handleNudge(direction, undefined);
 		}
 	};
 
@@ -525,9 +664,50 @@ export class ThreeJSApp {
 		return this.renderer;
 	}
 
+	private teardownOnScreenControls(): void {
+		if (this.leftNudgeButton) {
+			if (this.leftNudgePointerHandler) {
+				this.leftNudgeButton.removeEventListener("pointerdown", this.leftNudgePointerHandler);
+			}
+			if (this.leftNudgeClickHandler) {
+				this.leftNudgeButton.removeEventListener("click", this.leftNudgeClickHandler);
+			}
+			if (this.swallowClickHandler) {
+				this.leftNudgeButton.removeEventListener("click", this.swallowClickHandler);
+			}
+			this.leftNudgeButton.disabled = false;
+			this.leftNudgeButton.classList.remove("is-disabled");
+		}
+		if (this.rightNudgeButton) {
+			if (this.rightNudgePointerHandler) {
+				this.rightNudgeButton.removeEventListener("pointerdown", this.rightNudgePointerHandler);
+			}
+			if (this.rightNudgeClickHandler) {
+				this.rightNudgeButton.removeEventListener("click", this.rightNudgeClickHandler);
+			}
+			if (this.swallowClickHandler) {
+				this.rightNudgeButton.removeEventListener("click", this.swallowClickHandler);
+			}
+			this.rightNudgeButton.disabled = false;
+			this.rightNudgeButton.classList.remove("is-disabled");
+		}
+		this.leftNudgeButton = undefined;
+		this.rightNudgeButton = undefined;
+		this.leftNudgePointerHandler = undefined;
+		this.rightNudgePointerHandler = undefined;
+		this.leftNudgeClickHandler = undefined;
+		this.rightNudgeClickHandler = undefined;
+		this.swallowClickHandler = undefined;
+		for (const timeoutId of this.buttonCooldowns.values()) {
+			window.clearTimeout(timeoutId);
+		}
+		this.buttonCooldowns.clear();
+	}
+
 	public dispose(): void {
 		window.removeEventListener("resize", this.onWindowResize);
 		window.removeEventListener("keydown", this.onKeyDown);
+		this.teardownOnScreenControls();
 		this.controls.dispose();
 		this.renderer.dispose();
 	}
@@ -540,5 +720,5 @@ document.addEventListener("DOMContentLoaded", () => {
 	}
 
 	// eslint-disable-next-line no-new
-	new ThreeJSApp(canvas, { modelUrl: POLICY_MODEL_URL });
+	new ThreeJSApp(canvas);
 });
