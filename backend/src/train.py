@@ -8,7 +8,7 @@ import hydra
 import numpy as np
 import torch
 import wandb
-from gymnasium.wrappers.numpy_to_torch import NumpyToTorch
+from gymnasium.wrappers.vector.numpy_to_torch import NumpyToTorch
 from omegaconf import DictConfig, OmegaConf
 from torch import optim
 from tqdm import tqdm
@@ -53,7 +53,14 @@ def main(config: DictConfig):
         logger.info("Wandb initialized successfully!")
 
     # Create environment
-    environment: gym.Env = NumpyToTorch(gym.make(config.environment.name, render_mode="rgb_array"))
+    environment: gym.Env = NumpyToTorch(
+        gym.make_vec(
+            config.environment.name,
+            num_envs=config.environment.num_envs,
+            render_mode="rgb_array",
+            vectorization_mode=config.environment.vectorization_mode,
+        )
+    )
 
     # Cart-Pole-v1 state space size is 4:
     # [cart position, cart velocity, pole angle, pole velocity at tip]
@@ -62,8 +69,8 @@ def main(config: DictConfig):
 
     # Create algorithm
     policy_model = PolicyModel(
-        state_space_size=environment.observation_space.shape[0],
-        action_space_size=environment.action_space.n,
+        state_space_size=environment.observation_space.shape[-1],
+        action_space_size=environment.action_space.nvec[0],
     ).to(device)
     optimizer = optim.Adam(policy_model.parameters(), lr=config.trainer.learning_rate)
     algorithm = get_algorithm(environment, config.algorithm, config.seed)
@@ -87,6 +94,7 @@ def main(config: DictConfig):
         total_reward, terminated, truncated, frames = algorithm.sample_rollout(
             policy_model, device, will_render
         )
+        total_reward = total_reward.mean().item()
         algorithm.update(policy_model, optimizer)
 
         # Log metrics to wandb (if enabled)
@@ -94,15 +102,9 @@ def main(config: DictConfig):
             wandb.log({"step": step, "episode_reward": total_reward}, step=step)
 
             if will_render:
-                frames = frames.permute(0, 3, 1, 2)
+                frames = frames.transpose(0, 3, 1, 2)
                 video = wandb.Video(frames, fps=config.trainer.render_fps, format="mp4")
                 wandb.log({"video": video}, step=step)
-
-        if terminated or truncated:
-            episode_type = "truncated" if truncated else "terminated"
-            logger.warning(f"Episode {episode_type} with total reward: {total_reward:.1f}")
-
-            total_reward = 0
 
         running_total_reward = 0.99 * running_total_reward + 0.01 * total_reward
 

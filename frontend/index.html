@@ -3,10 +3,18 @@
 	<head>
 		<meta charset="utf-8">
 		<title>CartPole-v1 Balancing Bot</title>
-        <link rel="stylesheet" href="./src/style.css">
+        <link rel="stylesheet" href="./style.css">
 	</head>
 	<body>
         <canvas class="threejs"></canvas>
+        <div class="nudge-controls">
+            <button type="button" class="nudge-button nudge-button--left" data-nudge="left" aria-label="Push left">
+                ◀
+            </button>
+            <button type="button" class="nudge-button nudge-button--right" data-nudge="right" aria-label="Push right">
+                ▶
+            </button>
+        </div>
         <script type="module" src="./src/main.ts"></script>
 	</body>
 </html>

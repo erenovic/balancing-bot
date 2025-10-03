@@ -1,6 +1,7 @@
 from collections import namedtuple
 
 import gymnasium as gym
+import numpy as np
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -9,7 +10,7 @@ from torch.nn.functional import smooth_l1_loss
 
 from src.policy_model import PolicyModel
 
-Rollout = namedtuple("Rollout", ["log_prob", "value", "reward"])
+Rollout = namedtuple("Rollout", ["log_prob", "value", "reward", "done"])
 
 
 class REINFORCE:
@@ -34,19 +35,19 @@ class REINFORCE:
         # Compute discounted returns (from the end)
         returns = []
         cum_reward = 0.0
-        for _, _, r in reversed(self.rollouts):
-            r_val = r.item() if isinstance(r, torch.Tensor) else float(r)
-            cum_reward = r_val + self.config.gamma * cum_reward
+        for _, _, reward, done in reversed(self.rollouts):
+            # r_val = r.item() if isinstance(r, torch.Tensor) else float(r)
+            cum_reward = reward + self.config.gamma * cum_reward * (1 - done.float())
             returns.insert(0, cum_reward)
 
-        returns_t = torch.tensor(returns, dtype=torch.float32, device=device)
+        returns_t = torch.stack(returns).to(device)
         # Normalize for variance reduction
         returns_t = (returns_t - returns_t.mean()) / (returns_t.std() + self.eps)
 
         policy_losses = []
         value_losses = []
 
-        for (log_prob, value, _), Rn in zip(self.rollouts, returns_t, strict=True):
+        for (log_prob, value, _, _), Rn in zip(self.rollouts, returns_t, strict=True):
             # Advantage using baseline
             advantage = Rn - value.detach()
             policy_losses.append(-log_prob * advantage)
@@ -75,29 +76,26 @@ class REINFORCE:
 
         frames = None
         if will_render:
-            frames = [self.environment.render()]
+            frames = [self.environment.render()[0]]
 
-        for _ in range(self.config.rollout_length):
+        for step in range(self.config.rollout_length):
             logits, value = model(state)
             dist = Categorical(logits=logits)
             action = dist.sample()
-            log_prob = dist.log_prob(action)
 
-            next_state, reward, terminated, truncated, _ = self.environment.step(action.item())
+            action_cpu = action.detach().to("cpu", dtype=torch.long)
+            next_state, reward, terminated, truncated, _ = self.environment.step(action_cpu)
+            done = terminated | truncated
 
-            # Convert reward to python float for accumulation but keep tensor if needed
-            r_item = reward.item() if isinstance(reward, torch.Tensor) else float(reward)
-            total_reward += r_item
-
-            self.rollouts.append(Rollout(log_prob, value, reward))
-
-            if terminated or truncated:
-                break
+            self.rollouts.append(
+                Rollout(log_prob=dist.log_prob(action), value=value, reward=reward, done=done)
+            )
+            total_reward += reward * (self.config.gamma**step)
 
             state = next_state.to(device)
 
             if will_render:
-                frames.append(self.environment.render())
+                frames.append(self.environment.render()[0])
 
-        frames = torch.stack(frames) if will_render else frames
+        frames = np.stack(frames) if will_render else frames
         return total_reward, terminated, truncated, frames

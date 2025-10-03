@@ -1,18 +1,20 @@
 algorithm:
   name: reinforce
-  rollout_length: 100
+  rollout_length: 500
   gamma: 0.99
 
 trainer:
   num_steps: 1000
   learning_rate: 0.001
 
-  render_every_n_steps: 200
+  render_every_n_steps: 100
   save_every_n_steps: 200
   render_fps: 30
 
 environment:
   name: CartPole-v1
+  num_envs: 1
+  vectorization_mode: vector_entry_point
 
 seed: 42
 

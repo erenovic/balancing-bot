@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as ort from "onnxruntime-web";
+import { createAGrid } from "./utils";
 
 const POLICY_MODEL_URL = "/models/policy_model_best.onnx";
 const ORT_WASM_BASE_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/";
@@ -15,32 +16,44 @@ interface CartPoleState {
 class CartPoleVisual {
 	private readonly root: THREE.Group;
 	private readonly polePivot: THREE.Group;
-	private readonly trackHalfLength: number;
+	private readonly cartMesh: THREE.Mesh;
+	private trackHalfLength: number;
+	private readonly pushIndicator: THREE.ArrowHelper;
+	private readonly pushDirectionVector: THREE.Vector3 = new THREE.Vector3();
+	private readonly pushOffset: THREE.Vector3 = new THREE.Vector3();
+	private readonly poleTipWorld: THREE.Vector3 = new THREE.Vector3();
+	private pushIndicatorTimer = 0;
+	private pushIndicatorDirection = 0;
 
-  private readonly cartWidth = 0.6;
-  private readonly cartHeight = 0.25;
-  private readonly cartDepth = 0.4;
-  private readonly railThickness = 0.05;
-  private readonly trackLength = 10.0;
-  private readonly poleLength = 1.0;
+	private readonly cartWidth = 0.6;
+	private readonly cartHeight = 0.25;
+	private readonly cartDepth = 0.4;
+	private readonly railThickness = 0.05;
+	private readonly trackLength = 10.0;
+	private readonly poleLength = 1.0;
+	private readonly pushIndicatorDuration = 0.4;
+	private readonly pushIndicatorLength = 0.3;
+	private readonly pushIndicatorHeadLength = 0.12;
+	private readonly pushIndicatorHeadWidth = 0.07;
 
 	constructor(scene: THREE.Scene) {
 		this.root = new THREE.Group();
 		this.trackHalfLength = this.trackLength / 2;
 
 		// Rail spanning the track
-		const railGeometry = new THREE.BoxGeometry(this.trackLength, this.railThickness, this.cartDepth * 1.2);
+		const railGeometry = new THREE.BoxGeometry(this.trackLength + this.cartWidth, this.railThickness, this.cartDepth * 1.2);
 		const railMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
 		const railMesh = new THREE.Mesh(railGeometry, railMaterial);
 		railMesh.position.y = -this.cartHeight * 0.5 - this.railThickness * 0.5;
 		railMesh.receiveShadow = true;
 		scene.add(railMesh);
 
-		// Cart body
+		// Cart body moving on the track
 		const cartGeometry = new THREE.BoxGeometry(this.cartWidth, this.cartHeight, this.cartDepth);
 		const cartMaterial = new THREE.MeshStandardMaterial({ color: 0x1976d2 });
 		const cartMesh = new THREE.Mesh(cartGeometry, cartMaterial);
 		cartMesh.castShadow = true;
+		this.cartMesh = cartMesh;
 		this.root.add(cartMesh);
 
 		// Pole pivot is placed at the top center of the cart
@@ -55,49 +68,122 @@ class CartPoleVisual {
 		poleMesh.position.y = this.poleLength * 0.5;
 		this.polePivot.add(poleMesh);
 
-		// Wheels for a bit of depth perception
-		const wheelGeometry = new THREE.CylinderGeometry(0.08, 0.08, this.cartWidth * 0.9, 32);
-		const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
-		const wheelOffsets = [-this.cartDepth * 0.5, this.cartDepth * 0.5];
-		for (const z of wheelOffsets) {
-			const leftWheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
-			leftWheel.rotation.z = Math.PI / 2;
-			leftWheel.position.set(-this.cartWidth * 0.25, -this.cartHeight * 0.5 - 0.05, z);
-			leftWheel.castShadow = true;
-			this.root.add(leftWheel);
-
-			const rightWheel = leftWheel.clone();
-			rightWheel.position.x = this.cartWidth * 0.25;
-			this.root.add(rightWheel);
-		}
-
 		scene.add(this.root);
+
+		this.pushIndicator = new THREE.ArrowHelper(
+			new THREE.Vector3(1, 0, 0),
+			new THREE.Vector3(0, 0, 0),
+			this.pushIndicatorLength,
+			0xff3b30,
+			this.pushIndicatorHeadLength,
+			this.pushIndicatorHeadWidth,
+		);
+		this.pushIndicator.visible = false;
+		scene.add(this.pushIndicator);
 	}
 
-	public update(state: CartPoleState): void {
+	public update(state: CartPoleState, delta: number): void {
 		this.root.position.x = THREE.MathUtils.clamp(state.x, -this.trackHalfLength, this.trackHalfLength);
 		this.polePivot.rotation.z = -state.theta;
+		this.updatePushIndicator(delta);
+	}
+
+	public getCartPosition(target: THREE.Vector3): THREE.Vector3 {
+		return this.cartMesh.getWorldPosition(target);
+	}
+
+	public showPushIndicator(direction: number, strength: number = 1.0): void {
+		const directionSign = Math.sign(direction);
+		if (directionSign === 0) {
+			return;
+		}
+
+		const clampedStrength = THREE.MathUtils.clamp(strength, 0.25, 5);
+		const scaledLength = THREE.MathUtils.clamp(
+			this.pushIndicatorLength * clampedStrength,
+			this.pushIndicatorLength * 0.6,
+			this.pushIndicatorLength * 1.8,
+		);
+		this.pushIndicator.setLength(scaledLength, this.pushIndicatorHeadLength, this.pushIndicatorHeadWidth);
+		this.pushIndicatorDirection = directionSign;
+		this.pushIndicatorTimer = this.pushIndicatorDuration;
+		this.pushIndicator.visible = true;
+		this.refreshPushIndicatorPosition();
+	}
+
+	public getTrackLength(): number {
+		return this.trackLength;
+	}
+
+	public getCartWidth(): number {
+		return this.cartWidth;
+	}
+
+	private updatePushIndicator(delta: number): void {
+		if (!this.pushIndicator.visible) {
+			return;
+		}
+
+		this.refreshPushIndicatorPosition();
+		this.pushIndicatorTimer -= delta;
+		if (this.pushIndicatorTimer <= 0) {
+			this.pushIndicator.visible = false;
+			this.pushIndicatorTimer = 0;
+		}
+	}
+
+	private refreshPushIndicatorPosition(): void {
+		if (this.pushIndicatorDirection === 0) {
+			return;
+		}
+
+		this.polePivot.updateMatrixWorld(true);
+		this.poleTipWorld.set(0, this.poleLength, 0);
+		this.polePivot.localToWorld(this.poleTipWorld);
+
+		this.pushDirectionVector.set(this.pushIndicatorDirection, 0, 0).normalize();
+		this.pushIndicator.setDirection(this.pushDirectionVector);
+		this.pushOffset.copy(this.pushDirectionVector).multiplyScalar(0.05);
+		this.pushIndicator.position.copy(this.poleTipWorld).add(this.pushOffset);
+		this.pushIndicator.position.y += 0.02;
 	}
 }
 
 class CartPoleSimulator {
-	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0.05, thetaDot: 0 };
+	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0, thetaDot: 0 };
 	private readonly gravity = 9.8;
 	private readonly massCart = 1.0;
 	private readonly massPole = 0.1;
 	private readonly totalMass = this.massCart + this.massPole;
 	private readonly halfPoleLength = 0.5; // Gym's "length" parameter (half pole length)
 	private readonly poleMassLength = this.massPole * this.halfPoleLength;
-	private readonly forceMag = 100.0;
+	private readonly forceMag = 10.0;
 	private readonly tau = 0.02;
+	private readonly thetaThresholdRadians = (30 * Math.PI) / 180;
+	private readonly maxEpisodeSteps = 1000;
 	private accumulator = 0;
 	private appliedForce = 0;
+	private stepsSinceReset = 0;
+	private resetFlag = false;
+
+	constructor() {
+		this.reset();
+	}
 
 	public advance(dt: number): CartPoleState {
+		let stepsPerformed = 0;
+		this.resetFlag = false;
 		this.accumulator += dt;
 		while (this.accumulator >= this.tau) {
 			this.integrateStep();
 			this.accumulator -= this.tau;
+			stepsPerformed += 1;
+		}
+		if (stepsPerformed > 0) {
+			this.stepsSinceReset += stepsPerformed;
+		}
+		if (this.hasEpisodeTerminated()) {
+			this.reset();
 		}
 		return { ...this.state };
 	}
@@ -115,11 +201,20 @@ class CartPoleSimulator {
 	}
 
 	public reset(state?: Partial<CartPoleState>): void {
-		this.state.x = state?.x ?? 0;
-		this.state.xDot = state?.xDot ?? 0;
+		this.state.x = state?.x ?? THREE.MathUtils.randFloatSpread(0.1);
+		this.state.xDot = state?.xDot ?? THREE.MathUtils.randFloatSpread(0.1);
 		this.state.theta = state?.theta ?? THREE.MathUtils.randFloatSpread(0.1);
-		this.state.thetaDot = state?.thetaDot ?? 0;
+		this.state.thetaDot = state?.thetaDot ?? THREE.MathUtils.randFloatSpread(0.1);
 		this.accumulator = 0;
+		this.stepsSinceReset = 0;
+		this.appliedForce = 0;
+		this.resetFlag = true;
+	}
+
+	public consumeResetFlag(): boolean {
+		const flag = this.resetFlag;
+		this.resetFlag = false;
+		return flag;
 	}
 
 	private integrateStep(): void {
@@ -136,6 +231,32 @@ class CartPoleSimulator {
 		this.state.xDot = xDot + this.tau * xAcc;
 		this.state.theta = theta + this.tau * thetaDot;
 		this.state.thetaDot = thetaDot + this.tau * thetaAcc;
+	}
+
+	private hasEpisodeTerminated(): boolean {
+		return (
+			Math.abs(this.state.theta) > this.thetaThresholdRadians ||
+			this.stepsSinceReset >= this.maxEpisodeSteps
+		);
+	}
+
+	public nudgePole(direction: number, strength: number = 1.0): void {
+		const directionSign = Math.sign(direction);
+		if (directionSign === 0) {
+			return;
+		}
+
+		const clampedStrength = THREE.MathUtils.clamp(strength, 0, 5);
+		const angleImpulse = THREE.MathUtils.degToRad(1.5) * clampedStrength;
+		const angularVelocityImpulse = THREE.MathUtils.degToRad(45) * clampedStrength;
+		const cartVelocityImpulse = 0.4 * clampedStrength;
+
+		this.state.theta += angleImpulse * directionSign;
+		this.state.thetaDot += angularVelocityImpulse * directionSign;
+		this.state.xDot += cartVelocityImpulse * directionSign;
+
+		const maxTheta = this.thetaThresholdRadians * 0.99;
+		this.state.theta = THREE.MathUtils.clamp(this.state.theta, -maxTheta, maxTheta);
 	}
 }
 
@@ -243,10 +364,12 @@ export class ThreeJSApp {
 	private readonly scene: THREE.Scene;
 	private readonly camera: THREE.PerspectiveCamera;
 	private readonly renderer: THREE.WebGLRenderer;
-	private readonly controls: TrackballControls;
+	private readonly controls: OrbitControls;
 	private readonly clock: THREE.Clock = new THREE.Clock();
-	private readonly cartPoleVisual: CartPoleVisual;
 	private readonly simulator: CartPoleSimulator;
+	private cartPoleVisual: CartPoleVisual;
+	private readonly cameraFollowOffset: THREE.Vector3 = new THREE.Vector3();
+	private readonly cartWorldPosition: THREE.Vector3 = new THREE.Vector3();
 	private policyRunner?: PolicyRunner;
 	private policyActionPending = false;
 
@@ -263,14 +386,12 @@ export class ThreeJSApp {
 		this.renderer.setSize(window.innerWidth, window.innerHeight);
 		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-		this.controls = new TrackballControls(this.camera, canvas);
-		this.controls.dynamicDampingFactor = 0.05;
+		this.controls = new OrbitControls(this.camera, canvas);
+		this.controls.enableDamping = true;
+		this.controls.dampingFactor = 0.05;
 		this.controls.rotateSpeed = 3;
-
-		this.addLights();
-		this.addGround();
-		this.addFog();
-		this.scene.add(new THREE.AxesHelper(1.5));
+		this.controls.target.set(0, 0.5, 0);
+		this.cameraFollowOffset.copy(this.camera.position).sub(this.controls.target);
 
 		this.simulator = new CartPoleSimulator();
 		this.simulator.setForce(0);
@@ -278,6 +399,11 @@ export class ThreeJSApp {
 		if (options?.modelUrl) {
 			this.initializePolicy(options.modelUrl);
 		}
+
+    this.addLights();
+		this.addGround();
+		this.addFog();
+		this.scene.add(new THREE.AxesHelper(1.5));
 
 		this.setupEventListeners();
 		this.animate();
@@ -336,7 +462,7 @@ export class ThreeJSApp {
 	}
 
 	private addGround(): void {
-		const groundGeometry = new THREE.PlaneGeometry(20, 6);
+		const groundGeometry = new THREE.PlaneGeometry(this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), 2);
 		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, opacity: 0.3, transparent: true });
 		const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
 		groundMesh.rotation.x = -Math.PI / 2;
@@ -344,7 +470,7 @@ export class ThreeJSApp {
 		groundMesh.receiveShadow = true;
 		this.scene.add(groundMesh);
 
-		const gridHelper = new THREE.GridHelper(6, 40, 0x888888, 0xdddddd);
+		const gridHelper = createAGrid({ height: 2, width: this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), stepHeight: 0.1, stepWidth: 0.1, color: 0x888888 });
 		gridHelper.position.y = -0.179;
 		this.scene.add(gridHelper);
 	}
@@ -355,6 +481,7 @@ export class ThreeJSApp {
 
 	private setupEventListeners(): void {
 		window.addEventListener("resize", this.onWindowResize);
+		window.addEventListener("keydown", this.onKeyDown);
 	}
 
 	private onWindowResize = (): void => {
@@ -363,11 +490,31 @@ export class ThreeJSApp {
 		this.renderer.setSize(window.innerWidth, window.innerHeight);
 	};
 
+	private onKeyDown = (event: KeyboardEvent): void => {
+		if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+			event.preventDefault();
+			if (event.repeat) {
+				return;
+			}
+			const direction = event.key === "ArrowLeft" ? -1 : 1;
+			this.simulator.nudgePole(direction);
+			this.cartPoleVisual.showPushIndicator(direction);
+		}
+	};
+
 	private animate = (): void => {
 		const delta = this.clock.getDelta();
 		const state = this.simulator.advance(delta);
-		this.cartPoleVisual.update(state);
-		this.requestPolicyAction(state);
+		const simulatorWasReset = this.simulator.consumeResetFlag();
+		this.cartPoleVisual.update(state, delta);
+		if (!simulatorWasReset) {
+			this.requestPolicyAction(state);
+		}
+
+		this.cameraFollowOffset.copy(this.camera.position).sub(this.controls.target);
+		this.cartPoleVisual.getCartPosition(this.cartWorldPosition);
+		this.controls.target.copy(this.cartWorldPosition);
+		this.camera.position.copy(this.cartWorldPosition).add(this.cameraFollowOffset);
 
 		this.controls.update();
 		this.renderer.render(this.scene, this.camera);
@@ -379,6 +526,8 @@ export class ThreeJSApp {
 	}
 
 	public dispose(): void {
+		window.removeEventListener("resize", this.onWindowResize);
+		window.removeEventListener("keydown", this.onKeyDown);
 		this.controls.dispose();
 		this.renderer.dispose();
 	}
