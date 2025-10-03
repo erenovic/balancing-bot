@@ -681,25 +681,34 @@ export class ThreeJSApp {
 	private setupControlPane(): void {
 		const pane = new Pane({ title: "Simulation Controls" });
 		this.pane = pane;
-		pane
-			.addBinding(this.simulationState, "gravity", { min: 5, max: 20, step: 0.1, label: "Gravity" })
-			.on("change", (event: { value: number }) => {
-				const value = event.value;
-				this.simulator.updateParameters({ gravity: value });
+
+		const addSlider = (
+			key: keyof typeof this.simulationState,
+			params: Record<string, unknown>,
+			onChange: (value: number) => void,
+		): void => {
+			const binding = (pane as unknown as {
+				addBinding: (
+					target: Record<string, number>,
+					property: string,
+					options: Record<string, unknown>,
+				) => { on: (eventName: string, handler: (event: { value: number }) => void) => void };
+			}).addBinding(this.simulationState, key as string, params);
+			binding.on("change", (event) => {
+				onChange(event.value);
 			});
-		pane
-			.addBinding(this.simulationState, "massCart", { min: 0.2, max: 5, step: 0.1, label: "Cart Mass" })
-			.on("change", (event: { value: number }) => {
-				const value = event.value;
-				this.simulator.updateParameters({ massCart: value });
-			});
-		pane
-			.addBinding(this.simulationState, "poleLength", { min: 0.4, max: 2.0, step: 0.05, label: "Pole Length" })
-			.on("change", (event: { value: number }) => {
-				const value = event.value;
-				this.simulator.updateParameters({ poleLength: value });
-				this.cartPoleVisual.setPoleLength(value);
-			});
+		};
+
+		addSlider("gravity", { min: 5, max: 20, step: 0.1, label: "Gravity" }, (value) => {
+			this.simulator.updateParameters({ gravity: value });
+		});
+		addSlider("massCart", { min: 0.2, max: 5, step: 0.1, label: "Cart Mass" }, (value) => {
+			this.simulator.updateParameters({ massCart: value });
+		});
+		addSlider("poleLength", { min: 0.4, max: 2.0, step: 0.05, label: "Pole Length" }, (value) => {
+			this.simulator.updateParameters({ poleLength: value });
+			this.cartPoleVisual.setPoleLength(value);
+		});
 	}
 
 	private handleNudge(baseDirection: -1 | 1, sourceButton?: HTMLButtonElement): void {
