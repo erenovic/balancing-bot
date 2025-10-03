@@ -65,18 +65,100 @@ export interface ControlsConfig {
 	readonly manualPushStrength: number;
 }
 
+export interface SimulationDimensions {
+	readonly trackLength: number;
+	readonly railThickness: number;
+	readonly cart: {
+		readonly width: number;
+		readonly height: number;
+		readonly depth: number;
+	};
+	readonly pole: {
+		readonly length: number;
+		readonly thickness: number;
+	};
+}
+
+export interface SimulationPhysics {
+	readonly gravity: number;
+	readonly massCart: number;
+	readonly massPole: number;
+	readonly forceMagnitude: number;
+	readonly timeStep: number;
+	readonly thetaThresholdDegrees: number;
+	readonly maxEpisodeSteps: number;
+}
+
+export interface SimulationNudge {
+	readonly angleImpulseDegrees: number;
+	readonly angularVelocityImpulseDegrees: number;
+	readonly cartVelocityImpulse: number;
+}
+
+export interface SimulationIndicators {
+	readonly pushDurationSeconds: number;
+	readonly pushLength: number;
+	readonly pushHeadLength: number;
+	readonly pushHeadWidth: number;
+}
+
+export interface SimulationConfig {
+	readonly dimensions: SimulationDimensions;
+	readonly physics: SimulationPhysics;
+	readonly nudges: SimulationNudge;
+	readonly indicators: SimulationIndicators;
+}
+
 export interface AppConfig {
 	readonly baseUrl: string;
 	readonly policy: PolicyConfig;
 	readonly onnxRuntime: OnnxRuntimeConfig;
 	readonly controls: ControlsConfig;
+	readonly simulation: SimulationConfig;
 }
+
+const simulationConfig: SimulationConfig = Object.freeze({
+	dimensions: {
+		trackLength: 10,
+		railThickness: 0.05,
+		cart: {
+			width: 0.6,
+			height: 0.25,
+			depth: 0.4,
+		},
+		pole: {
+			length: 1,
+			thickness: 0.05,
+		},
+	},
+	physics: {
+		gravity: 9.8,
+		massCart: 1,
+		massPole: 0.1,
+		forceMagnitude: 10,
+		timeStep: 0.02,
+		thetaThresholdDegrees: 30,
+		maxEpisodeSteps: 1000,
+	},
+	nudges: {
+		angleImpulseDegrees: 1.5,
+		angularVelocityImpulseDegrees: 45,
+		cartVelocityImpulse: 0.4,
+	},
+	indicators: {
+		pushDurationSeconds: 0.4,
+		pushLength: 0.3,
+		pushHeadLength: 0.12,
+		pushHeadWidth: 0.07,
+	},
+});
 
 const config: AppConfig = Object.freeze({
 	baseUrl,
 	policy: { modelUrl: policyModelUrl },
 	onnxRuntime: { wasmBaseUrl: ortWasmBaseUrl },
 	controls: { manualPushStrength },
+	simulation: simulationConfig,
 });
 
 export default config;

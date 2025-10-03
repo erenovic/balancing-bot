@@ -1,55 +1,91 @@
-# backend
+# Balancing Bot
 
-RL training pipeline using python / pytorch
+Physics-driven cart-pole visualisation backed by a reinforcement-learning training pipeline. The repository is split into two workspaces:
 
-[![CI](https://github.com/erenovic/backend/workflows/CI/badge.svg)](https://github.com/erenovic/backend/actions)
-[![Coverage](https://codecov.io/gh/erenovic/backend/branch/main/graph/badge.svg)](https://codecov.io/gh/erenovic/backend)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+- [`frontend/`](frontend/README.md) – Vite/TypeScript web app that simulates the CartPole system with Three.js, runs ONNX models in the browser, and exposes keyboard/touch controls so you can perturb the pole.
+- [`backend/`](backend/README.md) – Hydra-based Python project that trains cart-pole policies with Torch and exports them to ONNX for the frontend.
 
-## Installation
+---
 
-```bash
-pip install backend
-```
+## Quick links
 
-### Setup
+| Area | Description |
+| --- | --- |
+| 🎮 **Live Demo** | Build the frontend (`npm run build -- --base=/assets/demos/rl-cartpole/`) and drop `dist/` onto your static host. On GitHub Pages the demo lives under `https://erenovic.github.io/assets/demos/rl-cartpole/`. |
+| 📦 **Frontend docs** | [frontend/README.md](frontend/README.md) – setup, configuration vars (`VITE_*`), architecture walkthrough. |
+| 🧠 **Backend docs** | [backend/README.md](backend/README.md) – training pipeline, Hydra configs, ONNX export instructions. |
 
-2. Set up development environment:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-make all  # Install dependencies, pre-commit hooks, and run all checks
-```
+---
 
-### Development Commands
+## Getting started
+
+Clone the repo and set up both workspaces:
 
 ```bash
-make help          # Show all available commands
-make install-dev   # Install development dependencies
-make fmt           # Format code with ruff
-make lint          # Lint code with ruff
-make typecheck     # Type check with mypy
-make test          # Run tests
-make test-cov      # Run tests with coverage
-make ci            # Run all CI checks locally
-make clean         # Clean build artifacts
+git clone https://github.com/erenovic/balancing_bot.git
+cd balancing_bot
 ```
 
+### Frontend (Three.js + ONNX Runtime)
 
-## Features
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-- ✅ Modern Python packaging with `pyproject.toml`
-- ✅ Code formatting and linting with Ruff
-- ✅ Static type checking with mypy
-- ✅ Testing with pytest and coverage reporting
-- ✅ Pre-commit hooks for code quality
-- ✅ GitHub Actions CI/CD
+- Ensure a policy model exists at `public/models/policy_model_best.onnx` (or set `VITE_POLICY_MODEL_URL`).
+- Use the arrow keys or on-screen chevrons to nudge the pole and observe the policy recover in real time.
+- See [frontend/README.md](frontend/README.md) for deployment tips (including configuring the `--base` path when serving from a subdirectory).
+
+### Backend (Hydra/Torch training)
+
+```bash
+cd backend
+uv sync          # or pip install -e .
+uv run python -m src.train
+```
+
+- Default config trains REINFORCE on Gymnasium’s `CartPole-v1`. Override parameters via Hydra CLI flags (`trainer.num_steps=5000 algorithm.name=ppo` etc.).
+- Export the best checkpoint to ONNX with `uv run python -m src.export model_path=...` and copy the resulting `.onnx` into the frontend.
+- Detailed instructions live in [backend/README.md](backend/README.md).
+
+---
+
+## Directory structure
+
+```
+backend/   # RL training harness
+frontend/  # Three.js visualiser + ONNX inference client
+README.md  # This file
+```
+
+---
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Pull requests and discussion threads are welcome. Please read the workspace-specific READMEs before making changes so the tooling (Hydra, Vite, etc.) stays consistent.
+
+---
+
+## Citing
+
+If this project helps your research or teaching, please cite it. A simple BibTeX snippet you can adapt:
+
+```
+@software{cetin2024balancingbot,
+  author    = {Eren {\c{C}}etin},
+  title     = {Balancing Bot: CartPole Reinforcement Learning Demo},
+  year      = {2024},
+  url       = {https://github.com/erenovic/balancing_bot},
+  version   = {latest}
+}
+```
+
+Feel free to link to any published paper or demo page associated with your deployment if you customise the project.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT © Eren Çetin. See [`LICENSE`](LICENSE) for details.

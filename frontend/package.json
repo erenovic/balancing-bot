@@ -17,6 +17,7 @@
 	"dependencies": {
 		"cannon-es": "^0.20.0",
 		"onnxruntime-web": "^1.23.0",
-		"three": "^0.180.0"
+		"three": "^0.180.0",
+		"tweakpane": "^4.0.5"
 	}
 }

@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as ort from "onnxruntime-web";
 import config from "./config";
+import type { SimulationConfig } from "./config";
 import { createAGrid } from "./utils";
+import { Pane } from "tweakpane";
 
 interface CartPoleState {
 	x: number;          // Cart position
@@ -26,23 +28,36 @@ class CartPoleVisual {
 	private readonly pushDirectionVector: THREE.Vector3 = new THREE.Vector3();
 	private readonly pushOffset: THREE.Vector3 = new THREE.Vector3();
 	private readonly poleTipWorld: THREE.Vector3 = new THREE.Vector3();
+	private readonly poleMesh: THREE.Mesh;
+	private readonly basePoleLength: number;
 	private pushIndicatorTimer = 0;
 	private pushIndicatorDirection = 0;
 
-	private readonly cartWidth = 0.6;
-	private readonly cartHeight = 0.25;
-	private readonly cartDepth = 0.4;
-	private readonly railThickness = 0.05;
-	private readonly trackLength = 10.0;
-	private readonly poleLength = 1.0;
-	private readonly pushIndicatorDuration = 0.4;
-	private readonly pushIndicatorLength = 0.3;
-	private readonly pushIndicatorHeadLength = 0.12;
-	private readonly pushIndicatorHeadWidth = 0.07;
+	private readonly cartWidth: number;
+	private readonly cartHeight: number;
+	private readonly cartDepth: number;
+	private readonly railThickness: number;
+	private readonly trackLength: number;
+	private poleLength: number;
+	private readonly pushIndicatorDuration: number;
+	private readonly pushIndicatorLength: number;
+	private readonly pushIndicatorHeadLength: number;
+	private readonly pushIndicatorHeadWidth: number;
 
-	constructor(scene: THREE.Scene) {
+	constructor(scene: THREE.Scene, simulation: SimulationConfig) {
 		this.root = new THREE.Group();
+		this.cartWidth = simulation.dimensions.cart.width;
+		this.cartHeight = simulation.dimensions.cart.height;
+		this.cartDepth = simulation.dimensions.cart.depth;
+		this.railThickness = simulation.dimensions.railThickness;
+		this.trackLength = simulation.dimensions.trackLength;
+		this.poleLength = simulation.dimensions.pole.length;
+		this.pushIndicatorDuration = simulation.indicators.pushDurationSeconds;
+		this.pushIndicatorLength = simulation.indicators.pushLength;
+		this.pushIndicatorHeadLength = simulation.indicators.pushHeadLength;
+		this.pushIndicatorHeadWidth = simulation.indicators.pushHeadWidth;
 		this.trackHalfLength = this.trackLength / 2;
+		this.basePoleLength = simulation.dimensions.pole.length;
 
 		// Rail spanning the track
 		const railGeometry = new THREE.BoxGeometry(this.trackLength + this.cartWidth, this.railThickness, this.cartDepth * 1.2);
@@ -65,12 +80,13 @@ class CartPoleVisual {
 		this.polePivot.position.y = this.cartHeight * 0.5;
 		this.root.add(this.polePivot);
 
-		const poleGeometry = new THREE.BoxGeometry(0.05, this.poleLength, 0.05);
+		const poleGeometry = new THREE.BoxGeometry(simulation.dimensions.pole.thickness, this.poleLength, simulation.dimensions.pole.thickness);
 		const poleMaterial = new THREE.MeshStandardMaterial({ color: 0xffa000 });
 		const poleMesh = new THREE.Mesh(poleGeometry, poleMaterial);
 		poleMesh.castShadow = true;
 		poleMesh.position.y = this.poleLength * 0.5;
 		this.polePivot.add(poleMesh);
+		this.poleMesh = poleMesh;
 
 		scene.add(this.root);
 
@@ -123,6 +139,14 @@ class CartPoleVisual {
 		return this.cartWidth;
 	}
 
+	public setPoleLength(length: number): void {
+		this.poleLength = length;
+		const scale = length / this.basePoleLength;
+		this.poleMesh.scale.y = scale;
+		this.poleMesh.position.y = this.poleLength * 0.5;
+		this.refreshPushIndicatorPosition();
+	}
+
 	private updatePushIndicator(delta: number): void {
 		if (!this.pushIndicator.visible) {
 			return;
@@ -151,26 +175,45 @@ class CartPoleVisual {
 		this.pushIndicator.position.copy(this.poleTipWorld).add(this.pushOffset);
 		this.pushIndicator.position.y += 0.02;
 	}
+
 }
 
 class CartPoleSimulator {
 	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0, thetaDot: 0 };
-	private readonly gravity = 9.8;
-	private readonly massCart = 1.0;
-	private readonly massPole = 0.1;
-	private readonly totalMass = this.massCart + this.massPole;
-	private readonly halfPoleLength = 0.5; // Gym's "length" parameter (half pole length)
-	private readonly poleMassLength = this.massPole * this.halfPoleLength;
-	private readonly forceMag = 10.0;
-	private readonly tau = 0.02;
-	private readonly thetaThresholdRadians = (30 * Math.PI) / 180;
-	private readonly maxEpisodeSteps = 1000;
+	private gravity: number;
+	private massCart: number;
+	private readonly massPole: number;
+	private totalMass: number;
+	private halfPoleLength: number;
+	private poleMassLength: number;
+	private readonly forceMag: number;
+	private readonly tau: number;
+	private readonly thetaThresholdRadians: number;
+	private readonly maxEpisodeSteps: number;
+	private nudgeAngleImpulse: number;
+	private nudgeAngularVelocityImpulse: number;
+	private nudgeCartVelocityImpulse: number;
 	private accumulator = 0;
 	private appliedForce = 0;
 	private stepsSinceReset = 0;
 	private resetFlag = false;
 
-	constructor() {
+	constructor(simulation: SimulationConfig) {
+		this.gravity = simulation.physics.gravity;
+		this.massCart = simulation.physics.massCart;
+		this.massPole = simulation.physics.massPole;
+		this.totalMass = this.massCart + this.massPole;
+		this.halfPoleLength = simulation.dimensions.pole.length / 2;
+		this.poleMassLength = this.massPole * this.halfPoleLength;
+		this.forceMag = simulation.physics.forceMagnitude;
+		this.tau = simulation.physics.timeStep;
+		this.thetaThresholdRadians = (simulation.physics.thetaThresholdDegrees * Math.PI) / 180;
+		this.maxEpisodeSteps = simulation.physics.maxEpisodeSteps;
+		this.nudgeAngleImpulse = THREE.MathUtils.degToRad(simulation.nudges.angleImpulseDegrees);
+		this.nudgeAngularVelocityImpulse = THREE.MathUtils.degToRad(
+			simulation.nudges.angularVelocityImpulseDegrees
+		);
+		this.nudgeCartVelocityImpulse = simulation.nudges.cartVelocityImpulse;
 		this.reset();
 	}
 
@@ -198,6 +241,21 @@ class CartPoleSimulator {
 
 	public getForceMagnitude(): number {
 		return this.forceMag;
+	}
+
+	public updateParameters(params: { gravity?: number; massCart?: number; poleLength?: number }): void {
+		if (typeof params.gravity === "number") {
+			this.gravity = params.gravity;
+		}
+		if (typeof params.massCart === "number") {
+			this.massCart = Math.max(params.massCart, 0.1);
+			this.totalMass = this.massCart + this.massPole;
+		}
+		if (typeof params.poleLength === "number") {
+			const clampedLength = Math.max(params.poleLength, 0.1);
+			this.halfPoleLength = clampedLength / 2;
+			this.poleMassLength = this.massPole * this.halfPoleLength;
+		}
 	}
 
 	public getState(): CartPoleState {
@@ -251,9 +309,9 @@ class CartPoleSimulator {
 		}
 
 		const clampedStrength = THREE.MathUtils.clamp(strength, 0, 5);
-		const angleImpulse = THREE.MathUtils.degToRad(1.5) * clampedStrength;
-		const angularVelocityImpulse = THREE.MathUtils.degToRad(45) * clampedStrength;
-		const cartVelocityImpulse = 0.4 * clampedStrength;
+		const angleImpulse = this.nudgeAngleImpulse * clampedStrength;
+		const angularVelocityImpulse = this.nudgeAngularVelocityImpulse * clampedStrength;
+		const cartVelocityImpulse = this.nudgeCartVelocityImpulse * clampedStrength;
 
 		this.state.theta += angleImpulse * directionSign;
 		this.state.thetaDot += angularVelocityImpulse * directionSign;
@@ -378,6 +436,12 @@ export class ThreeJSApp {
 	private policyActionPending = false;
 	private readonly ortWasmBaseUrl: string;
 	private readonly manualPushStrength: number;
+	private readonly simulationConfig: SimulationConfig;
+	private readonly simulationState: {
+		gravity: number;
+		poleLength: number;
+		massCart: number;
+	};
 	private readonly nudgeCooldownMs = 1000;
 	private leftNudgeButton?: HTMLButtonElement;
 	private rightNudgeButton?: HTMLButtonElement;
@@ -388,6 +452,7 @@ export class ThreeJSApp {
 	private swallowClickHandler?: (event: MouseEvent) => void;
 	private readonly supportsPointerEvents = typeof window !== "undefined" && window.PointerEvent !== undefined;
 	private readonly buttonCooldowns = new Map<HTMLButtonElement, number>();
+	private pane?: Pane;
 	private readonly trackAxis: THREE.Vector3 = new THREE.Vector3(1, 0, 0);
 	private readonly tmpCameraForward: THREE.Vector3 = new THREE.Vector3();
 	private readonly tmpCameraRight: THREE.Vector3 = new THREE.Vector3();
@@ -399,9 +464,15 @@ export class ThreeJSApp {
 
 		this.ortWasmBaseUrl = resolvedWasmBaseUrl;
 		this.manualPushStrength = resolvedManualPushStrength;
+		this.simulationConfig = config.simulation;
+		this.simulationState = {
+			gravity: this.simulationConfig.physics.gravity,
+			poleLength: this.simulationConfig.dimensions.pole.length,
+			massCart: this.simulationConfig.physics.massCart,
+		};
 
 		this.scene = new THREE.Scene();
-		this.scene.background = new THREE.Color(0xf1f3f6);
+		this.scene.background = new THREE.Color(0xdfe8f6);
 
 		this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
 		this.camera.position.set(3, 2, 4);
@@ -419,9 +490,9 @@ export class ThreeJSApp {
 		this.controls.target.set(0, 0.5, 0);
 		this.cameraFollowOffset.copy(this.camera.position).sub(this.controls.target);
 
-		this.simulator = new CartPoleSimulator();
+		this.simulator = new CartPoleSimulator(this.simulationConfig);
 		this.simulator.setForce(0);
-		this.cartPoleVisual = new CartPoleVisual(this.scene);
+		this.cartPoleVisual = new CartPoleVisual(this.scene, this.simulationConfig);
 
 		if (resolvedModelUrl) {
 			this.initializePolicy(resolvedModelUrl);
@@ -429,11 +500,13 @@ export class ThreeJSApp {
 
 		this.addLights();
 		this.addGround();
+		this.addTrackMarkers();
 		this.addFog();
 		// this.scene.add(new THREE.AxesHelper(1.5));
 
 		this.setupEventListeners();
 		this.setupOnScreenControls();
+		this.setupControlPane();
 		this.animate();
 	}
 
@@ -490,21 +563,37 @@ export class ThreeJSApp {
 	}
 
 	private addGround(): void {
-		const groundGeometry = new THREE.PlaneGeometry(this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), 2);
-		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0, opacity: 0.3, transparent: true });
+		const groundGeometry = new THREE.PlaneGeometry(this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), 2.4);
+		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xb0bec5, opacity: 0.9, transparent: true });
 		const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
 		groundMesh.rotation.x = -Math.PI / 2;
-		groundMesh.position.y = -0.18;
+		groundMesh.position.y = -0.19;
 		groundMesh.receiveShadow = true;
 		this.scene.add(groundMesh);
 
-		const gridHelper = createAGrid({ height: 2, width: this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), stepHeight: 0.1, stepWidth: 0.1, color: 0x888888 });
-		gridHelper.position.y = -0.179;
+		const gridHelper = createAGrid({ height: 2.4, width: this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), stepHeight: 0.15, stepWidth: 0.2, color: 0x4a6572 });
+		gridHelper.position.y = -0.188;
+		const gridMaterial = (gridHelper.children[0] as THREE.LineSegments).material as THREE.LineBasicMaterial;
+		gridMaterial.opacity = 0.45;
 		this.scene.add(gridHelper);
 	}
 
+	private addTrackMarkers(): void {
+		const markerMaterial = new THREE.MeshStandardMaterial({ color: 0x37474f, metalness: 0.15, roughness: 0.6 });
+		const markerDepth = this.cartPoleVisual.getCartWidth() * 1.4;
+		const markerGeometry = new THREE.BoxGeometry(0.05, 0.01, markerDepth);
+		const markerGroup = new THREE.Group();
+		const spacing = 0.6;
+		for (let i = -Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing)); i <= Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing)); i += 1) {
+			const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+			marker.position.set(i * spacing, -0.179, 0);
+			markerGroup.add(marker);
+		}
+		this.scene.add(markerGroup);
+	}
+
 	private addFog(): void {
-		this.scene.fog = new THREE.Fog(0xf1f3f6, 1, 15);
+		this.scene.fog = new THREE.Fog(0xdfe8f6, 1, 12);
 	}
 
 	private setupEventListeners(): void {
@@ -587,6 +676,30 @@ export class ThreeJSApp {
 			leftButton.addEventListener("click", this.leftNudgeClickHandler);
 			rightButton.addEventListener("click", this.rightNudgeClickHandler);
 		}
+	}
+
+	private setupControlPane(): void {
+		const pane = new Pane({ title: "Simulation Controls" });
+		this.pane = pane;
+		pane
+			.addBinding(this.simulationState, "gravity", { min: 5, max: 20, step: 0.1, label: "Gravity" })
+			.on("change", (event: { value: number }) => {
+				const value = event.value;
+				this.simulator.updateParameters({ gravity: value });
+			});
+		pane
+			.addBinding(this.simulationState, "massCart", { min: 0.2, max: 5, step: 0.1, label: "Cart Mass" })
+			.on("change", (event: { value: number }) => {
+				const value = event.value;
+				this.simulator.updateParameters({ massCart: value });
+			});
+		pane
+			.addBinding(this.simulationState, "poleLength", { min: 0.4, max: 2.0, step: 0.05, label: "Pole Length" })
+			.on("change", (event: { value: number }) => {
+				const value = event.value;
+				this.simulator.updateParameters({ poleLength: value });
+				this.cartPoleVisual.setPoleLength(value);
+			});
 	}
 
 	private handleNudge(baseDirection: -1 | 1, sourceButton?: HTMLButtonElement): void {
@@ -704,10 +817,16 @@ export class ThreeJSApp {
 		this.buttonCooldowns.clear();
 	}
 
+	private disposeControlPane(): void {
+		this.pane?.dispose();
+		this.pane = undefined;
+	}
+
 	public dispose(): void {
 		window.removeEventListener("resize", this.onWindowResize);
 		window.removeEventListener("keydown", this.onKeyDown);
 		this.teardownOnScreenControls();
+		this.disposeControlPane();
 		this.controls.dispose();
 		this.renderer.dispose();
 	}
