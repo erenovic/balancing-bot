@@ -1,4 +1,4 @@
-import type { Pane } from "tweakpane";
+import { Pane } from "tweakpane";
 
 // Utility: restrict key to number-valued properties
 type KeysOfType<T, V> = { [K in keyof T]-?: T[K] extends V ? K : never }[keyof T];
