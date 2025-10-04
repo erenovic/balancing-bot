@@ -3,7 +3,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as ort from "onnxruntime-web";
 import config from "./config";
 import type { SimulationConfig } from "./config";
-import { createAGrid } from "./utils";
+import { createAGrid } from "./utils/threejs_objects";
+import { addSlider, addCheckbox } from "./utils/pane_utils";
 import { Pane } from "tweakpane";
 
 interface CartPoleState {
@@ -197,6 +198,7 @@ class CartPoleSimulator {
 	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0, thetaDot: 0 };
 	private gravity: number;
 	private massCart: number;
+	private enablePolicy: boolean = true;
 	private readonly massPole: number;
 	private totalMass: number;
 	private halfPoleLength: number;
@@ -262,6 +264,7 @@ class CartPoleSimulator {
 		gravity?: number;
 		massCart?: number;
 		poleLength?: number;
+		enablePolicy?: boolean;
 	}): void {
 		if (typeof params.gravity === "number") {
 			this.gravity = params.gravity;
@@ -274,6 +277,9 @@ class CartPoleSimulator {
 			const clampedLength = Math.max(params.poleLength, 0.1);
 			this.halfPoleLength = clampedLength / 2;
 			this.poleMassLength = this.massPole * this.halfPoleLength;
+		}
+		if (typeof params.enablePolicy === "boolean") {
+			this.enablePolicy = params.enablePolicy;
 		}
 	}
 
@@ -382,12 +388,16 @@ class PolicyRunner {
 		return this.busy;
 	}
 
-	public async predictForce(state: CartPoleState, forceMagnitude: number): Promise<number> {
+	public async predictForce(state: CartPoleState, forceMagnitude: number, enablePolicy: boolean): Promise<number> {
 		if (!this.session) {
 			throw new Error("Policy session is not initialized");
 		}
 		if (this.busy) {
 			throw new Error("Policy inference already in progress");
+		}
+
+		if (!enablePolicy) {
+			return 0;
 		}
 
 		this.busy = true;
@@ -465,6 +475,7 @@ export class ThreeJSApp {
 		gravity: number;
 		poleLength: number;
 		massCart: number;
+		enablePolicy: boolean;
 	};
 	private readonly nudgeCooldownMs = 1000;
 	private leftNudgeButton?: HTMLButtonElement;
@@ -495,6 +506,7 @@ export class ThreeJSApp {
 			gravity: this.simulationConfig.physics.gravity,
 			poleLength: this.simulationConfig.dimensions.pole.length,
 			massCart: this.simulationConfig.physics.massCart,
+			enablePolicy: this.simulationConfig.enablePolicy,
 		};
 
 		this.scene = new THREE.Scene();
@@ -565,7 +577,7 @@ export class ThreeJSApp {
 
 		this.policyActionPending = true;
 		this.policyRunner
-			.predictForce(state, this.simulator.getForceMagnitude())
+			.predictForce(state, this.simulator.getForceMagnitude(), this.simulationState.enablePolicy)
 			.then((force) => {
 				this.simulator.setForce(force);
 			})
@@ -735,34 +747,37 @@ export class ThreeJSApp {
 		const pane = new Pane({ title: "Simulation Controls" });
 		this.pane = pane;
 
-		const addSlider = (
-			key: keyof typeof this.simulationState,
-			params: Record<string, unknown>,
-			onChange: (value: number) => void,
-		): void => {
-			const binding = (
-				pane as unknown as {
-					addBinding: (
-						target: Record<string, number>,
-						property: string,
-						options: Record<string, unknown>,
-					) => { on: (eventName: string, handler: (event: { value: number }) => void) => void };
-				}
-			).addBinding(this.simulationState, key as string, params);
-			binding.on("change", (event) => {
-				onChange(event.value);
-			});
-		};
+		addSlider(
+			pane,
+			this.simulationState,
+			"gravity",
+			{ min: 5, max: 20, step: 0.1, label: "Gravity" },
+			(value) => {
+				this.simulator.updateParameters({ gravity: value });
+			},
+		);
+		addSlider(
+			pane,
+			this.simulationState,
+			"massCart",
+			{ min: 0.2, max: 5, step: 0.1, label: "Cart Mass" },
+			(value) => {
+				this.simulator.updateParameters({ massCart: value });
+			},
+		);
+		addSlider(
+			pane,
+			this.simulationState,
+			"poleLength",
+			{ min: 0.4, max: 2.0, step: 0.05, label: "Pole Length" },
+			(value) => {
+				this.simulator.updateParameters({ poleLength: value });
+				this.cartPoleVisual.setPoleLength(value);
+			},
+		);
 
-		addSlider("gravity", { min: 5, max: 20, step: 0.1, label: "Gravity" }, (value) => {
-			this.simulator.updateParameters({ gravity: value });
-		});
-		addSlider("massCart", { min: 0.2, max: 5, step: 0.1, label: "Cart Mass" }, (value) => {
-			this.simulator.updateParameters({ massCart: value });
-		});
-		addSlider("poleLength", { min: 0.4, max: 2.0, step: 0.05, label: "Pole Length" }, (value) => {
-			this.simulator.updateParameters({ poleLength: value });
-			this.cartPoleVisual.setPoleLength(value);
+		addCheckbox(pane, this.simulationState, "enablePolicy", { label: "Enable Policy" }, (value) => {
+			this.simulator.updateParameters({ enablePolicy: value });
 		});
 	}
 

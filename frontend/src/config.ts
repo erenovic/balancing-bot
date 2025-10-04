@@ -111,6 +111,7 @@ export interface SimulationConfig {
 	readonly physics: SimulationPhysics;
 	readonly nudges: SimulationNudge;
 	readonly indicators: SimulationIndicators;
+	readonly enablePolicy: boolean;
 }
 
 export interface AppConfig {
@@ -155,6 +156,7 @@ const simulationConfig: SimulationConfig = Object.freeze({
 		pushHeadLength: 0.12,
 		pushHeadWidth: 0.07,
 	},
+	enablePolicy: true,
 });
 
 const config: AppConfig = Object.freeze({
