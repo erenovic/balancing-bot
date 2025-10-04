@@ -13,10 +13,7 @@
   // Ruff extension settings - Full language support
   "ruff.enable": true,
   "ruff.lint.enable": true,
-  "ruff.format.args": [],
-  "ruff.lint.args": [],
   "ruff.importStrategy": "fromEnvironment",
-  "ruff.showNotifications": "onWarning",
   "ruff.organizeImports": true,
   "ruff.fixAll": true,
   "ruff.codeAction.fixViolation.enable": true,
@@ -69,7 +66,7 @@
     "editor.defaultFormatter": "vscode.json-language-features",
     "editor.formatOnSave": true
   },
-  "biome.lspBin": "${workspaceFolder}/frontend/node_modules/@biomejs/biome/bin/biome",
+  "biome.lsp.bin": "${workspaceFolder}/frontend/node_modules/@biomejs/biome/bin/biome",
   // If you use pnpm, set it explicitly
   "biome.packageManager": "pnpm"
 }
