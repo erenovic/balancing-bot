@@ -1,7 +1,6 @@
 {
   // Python settings
   "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
-
   // Ruff as formatter and language server
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
@@ -11,7 +10,6 @@
       "source.fixAll": "explicit"
     }
   },
-
   // Ruff extension settings - Full language support
   "ruff.enable": true,
   "ruff.lint.enable": true,
@@ -23,32 +21,45 @@
   "ruff.fixAll": true,
   "ruff.codeAction.fixViolation.enable": true,
   "ruff.codeAction.disableRuleComment.enable": true,
-
   // Disable other Python formatters/linters to avoid conflicts
   "python.formatting.provider": "none",
   "python.linting.enabled": false,
   "python.linting.pylintEnabled": false,
   "python.linting.flake8Enabled": false,
   "python.linting.mypyEnabled": false,
-
   // Use Ruff for language features (optional: Pylance can coexist)
-  "python.languageServer": "Pylance",  // Keep Pylance for type checking
-
+  // "python.languageServer": "Pylance",  // Keep Pylance for type checking
   // Editor settings for Python
-  "editor.rulers": [100],
+  "editor.rulers": [
+    100
+  ],
   "files.trimTrailingWhitespace": true,
   "files.insertFinalNewline": true,
-
   // TypeScript/Frontend settings
   "[typescript]": {
-    "editor.defaultFormatter": "biomejs.biome",
-    "editor.formatOnSave": true
+    "editor.defaultFormatter": "vscode.typescript-language-features",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.biome": "explicit",
+      "source.organizeImports.biome": "explicit"
+    }
   },
   "[javascript]": {
     "editor.defaultFormatter": "biomejs.biome",
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.biome": "explicit",
+      "source.organizeImports.biome": "explicit"
+    }
   },
-
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.biome": "explicit",
+      "source.organizeImports.biome": "explicit"
+    }
+  },
   // JSON settings
   "[json]": {
     "editor.defaultFormatter": "vscode.json-language-features",
@@ -57,6 +68,8 @@
   "[jsonc]": {
     "editor.defaultFormatter": "vscode.json-language-features",
     "editor.formatOnSave": true
-  }
+  },
+  "biome.lspBin": "${workspaceFolder}/frontend/node_modules/@biomejs/biome/bin/biome",
+  // If you use pnpm, set it explicitly
+  "biome.packageManager": "pnpm"
 }
-

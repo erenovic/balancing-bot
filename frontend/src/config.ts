@@ -31,7 +31,11 @@ function readString(key: keyof ImportMetaEnv, defaultValue: string): string {
 	return trimmed.length > 0 ? trimmed : defaultValue;
 }
 
-function readNumber(key: keyof ImportMetaEnv, defaultValue: number, bounds: NumericBounds = {}): number {
+function readNumber(
+	key: keyof ImportMetaEnv,
+	defaultValue: number,
+	bounds: NumericBounds = {},
+): number {
 	const rawValue = import.meta.env[key];
 	const parsed = rawValue !== undefined ? Number(rawValue) : Number.NaN;
 	const fallback = Number.isFinite(parsed) ? parsed : defaultValue;

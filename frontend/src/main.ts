@@ -7,10 +7,10 @@ import { createAGrid } from "./utils";
 import { Pane } from "tweakpane";
 
 interface CartPoleState {
-	x: number;          // Cart position
-	xDot: number;       // Cart velocity
-	theta: number;      // Pole angle
-	thetaDot: number;   // Pole velocity at tip
+	x: number; // Cart position
+	xDot: number; // Cart velocity
+	theta: number; // Pole angle
+	thetaDot: number; // Pole velocity at tip
 }
 
 interface ThreeJSAppOptions {
@@ -60,7 +60,11 @@ class CartPoleVisual {
 		this.basePoleLength = simulation.dimensions.pole.length;
 
 		// Rail spanning the track
-		const railGeometry = new THREE.BoxGeometry(this.trackLength + this.cartWidth, this.railThickness, this.cartDepth * 1.2);
+		const railGeometry = new THREE.BoxGeometry(
+			this.trackLength + this.cartWidth,
+			this.railThickness,
+			this.cartDepth * 1.2,
+		);
 		const railMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
 		const railMesh = new THREE.Mesh(railGeometry, railMaterial);
 		railMesh.position.y = -this.cartHeight * 0.5 - this.railThickness * 0.5;
@@ -80,7 +84,11 @@ class CartPoleVisual {
 		this.polePivot.position.y = this.cartHeight * 0.5;
 		this.root.add(this.polePivot);
 
-		const poleGeometry = new THREE.BoxGeometry(simulation.dimensions.pole.thickness, this.poleLength, simulation.dimensions.pole.thickness);
+		const poleGeometry = new THREE.BoxGeometry(
+			simulation.dimensions.pole.thickness,
+			this.poleLength,
+			simulation.dimensions.pole.thickness,
+		);
 		const poleMaterial = new THREE.MeshStandardMaterial({ color: 0xffa000 });
 		const poleMesh = new THREE.Mesh(poleGeometry, poleMaterial);
 		poleMesh.castShadow = true;
@@ -103,7 +111,11 @@ class CartPoleVisual {
 	}
 
 	public update(state: CartPoleState, delta: number): void {
-		this.root.position.x = THREE.MathUtils.clamp(state.x, -this.trackHalfLength, this.trackHalfLength);
+		this.root.position.x = THREE.MathUtils.clamp(
+			state.x,
+			-this.trackHalfLength,
+			this.trackHalfLength,
+		);
 		this.polePivot.rotation.z = -state.theta;
 		this.updatePushIndicator(delta);
 	}
@@ -124,7 +136,11 @@ class CartPoleVisual {
 			this.pushIndicatorLength * 0.6,
 			this.pushIndicatorLength * 1.8,
 		);
-		this.pushIndicator.setLength(scaledLength, this.pushIndicatorHeadLength, this.pushIndicatorHeadWidth);
+		this.pushIndicator.setLength(
+			scaledLength,
+			this.pushIndicatorHeadLength,
+			this.pushIndicatorHeadWidth,
+		);
 		this.pushIndicatorDirection = directionSign;
 		this.pushIndicatorTimer = this.pushIndicatorDuration;
 		this.pushIndicator.visible = true;
@@ -175,7 +191,6 @@ class CartPoleVisual {
 		this.pushIndicator.position.copy(this.poleTipWorld).add(this.pushOffset);
 		this.pushIndicator.position.y += 0.02;
 	}
-
 }
 
 class CartPoleSimulator {
@@ -211,7 +226,7 @@ class CartPoleSimulator {
 		this.maxEpisodeSteps = simulation.physics.maxEpisodeSteps;
 		this.nudgeAngleImpulse = THREE.MathUtils.degToRad(simulation.nudges.angleImpulseDegrees);
 		this.nudgeAngularVelocityImpulse = THREE.MathUtils.degToRad(
-			simulation.nudges.angularVelocityImpulseDegrees
+			simulation.nudges.angularVelocityImpulseDegrees,
 		);
 		this.nudgeCartVelocityImpulse = simulation.nudges.cartVelocityImpulse;
 		this.reset();
@@ -243,7 +258,11 @@ class CartPoleSimulator {
 		return this.forceMag;
 	}
 
-	public updateParameters(params: { gravity?: number; massCart?: number; poleLength?: number }): void {
+	public updateParameters(params: {
+		gravity?: number;
+		massCart?: number;
+		poleLength?: number;
+	}): void {
 		if (typeof params.gravity === "number") {
 			this.gravity = params.gravity;
 		}
@@ -283,10 +302,11 @@ class CartPoleSimulator {
 		const { x, xDot, theta, thetaDot } = this.state;
 		const sinTheta = Math.sin(theta);
 		const cosTheta = Math.cos(theta);
-		const temp = (this.appliedForce + this.poleMassLength * thetaDot * thetaDot * sinTheta) / this.totalMass;
-		const thetaAcc = (this.gravity * sinTheta - cosTheta * temp) / (
-			this.halfPoleLength * (4 / 3 - (this.massPole * cosTheta * cosTheta) / this.totalMass)
-		);
+		const temp =
+			(this.appliedForce + this.poleMassLength * thetaDot * thetaDot * sinTheta) / this.totalMass;
+		const thetaAcc =
+			(this.gravity * sinTheta - cosTheta * temp) /
+			(this.halfPoleLength * (4 / 3 - (this.massPole * cosTheta * cosTheta) / this.totalMass));
 		const xAcc = temp - (this.poleMassLength * thetaAcc * cosTheta) / this.totalMass;
 
 		this.state.x = x + this.tau * xDot;
@@ -411,7 +431,11 @@ class PolicyRunner {
 					force = bestIndex === 0 ? -forceMagnitude : forceMagnitude;
 				} else {
 					const normalized = (bestIndex / (dataArray.length - 1)) * 2 - 1;
-					force = THREE.MathUtils.clamp(normalized * forceMagnitude, -forceMagnitude, forceMagnitude);
+					force = THREE.MathUtils.clamp(
+						normalized * forceMagnitude,
+						-forceMagnitude,
+						forceMagnitude,
+					);
 				}
 			}
 
@@ -450,7 +474,8 @@ export class ThreeJSApp {
 	private leftNudgeClickHandler?: (event: MouseEvent) => void;
 	private rightNudgeClickHandler?: (event: MouseEvent) => void;
 	private swallowClickHandler?: (event: MouseEvent) => void;
-	private readonly supportsPointerEvents = typeof window !== "undefined" && window.PointerEvent !== undefined;
+	private readonly supportsPointerEvents =
+		typeof window !== "undefined" && window.PointerEvent !== undefined;
 	private readonly buttonCooldowns = new Map<HTMLButtonElement, number>();
 	private pane?: Pane;
 	private readonly trackAxis: THREE.Vector3 = new THREE.Vector3(1, 0, 0);
@@ -460,7 +485,8 @@ export class ThreeJSApp {
 	constructor(canvas: HTMLCanvasElement, options?: ThreeJSAppOptions) {
 		const resolvedModelUrl = options?.modelUrl ?? config.policy.modelUrl;
 		const resolvedWasmBaseUrl = options?.ortWasmBaseUrl ?? config.onnxRuntime.wasmBaseUrl;
-		const resolvedManualPushStrength = options?.manualPushStrength ?? config.controls.manualPushStrength;
+		const resolvedManualPushStrength =
+			options?.manualPushStrength ?? config.controls.manualPushStrength;
 
 		this.ortWasmBaseUrl = resolvedWasmBaseUrl;
 		this.manualPushStrength = resolvedManualPushStrength;
@@ -528,7 +554,12 @@ export class ThreeJSApp {
 	}
 
 	private requestPolicyAction(state: CartPoleState): void {
-		if (!this.policyRunner || !this.policyRunner.isReady() || this.policyRunner.isBusy() || this.policyActionPending) {
+		if (
+			!this.policyRunner ||
+			!this.policyRunner.isReady() ||
+			this.policyRunner.isBusy() ||
+			this.policyActionPending
+		) {
 			return;
 		}
 
@@ -563,28 +594,50 @@ export class ThreeJSApp {
 	}
 
 	private addGround(): void {
-		const groundGeometry = new THREE.PlaneGeometry(this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), 2.4);
-		const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xb0bec5, opacity: 0.9, transparent: true });
+		const groundGeometry = new THREE.PlaneGeometry(
+			this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(),
+			2.4,
+		);
+		const groundMaterial = new THREE.MeshStandardMaterial({
+			color: 0xb0bec5,
+			opacity: 0.9,
+			transparent: true,
+		});
 		const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
 		groundMesh.rotation.x = -Math.PI / 2;
 		groundMesh.position.y = -0.19;
 		groundMesh.receiveShadow = true;
 		this.scene.add(groundMesh);
 
-		const gridHelper = createAGrid({ height: 2.4, width: this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(), stepHeight: 0.15, stepWidth: 0.2, color: 0x4a6572 });
+		const gridHelper = createAGrid({
+			height: 2.4,
+			width: this.cartPoleVisual.getTrackLength() + this.cartPoleVisual.getCartWidth(),
+			stepHeight: 0.15,
+			stepWidth: 0.2,
+			color: 0x4a6572,
+		});
 		gridHelper.position.y = -0.188;
-		const gridMaterial = (gridHelper.children[0] as THREE.LineSegments).material as THREE.LineBasicMaterial;
+		const gridMaterial = (gridHelper.children[0] as THREE.LineSegments)
+			.material as THREE.LineBasicMaterial;
 		gridMaterial.opacity = 0.45;
 		this.scene.add(gridHelper);
 	}
 
 	private addTrackMarkers(): void {
-		const markerMaterial = new THREE.MeshStandardMaterial({ color: 0x37474f, metalness: 0.15, roughness: 0.6 });
+		const markerMaterial = new THREE.MeshStandardMaterial({
+			color: 0x37474f,
+			metalness: 0.15,
+			roughness: 0.6,
+		});
 		const markerDepth = this.cartPoleVisual.getCartWidth() * 1.4;
 		const markerGeometry = new THREE.BoxGeometry(0.05, 0.01, markerDepth);
 		const markerGroup = new THREE.Group();
 		const spacing = 0.6;
-		for (let i = -Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing)); i <= Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing)); i += 1) {
+		for (
+			let i = -Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing));
+			i <= Math.floor(this.cartPoleVisual.getTrackLength() / (2 * spacing));
+			i += 1
+		) {
 			const marker = new THREE.Mesh(markerGeometry, markerMaterial);
 			marker.position.set(i * spacing, -0.179, 0);
 			markerGroup.add(marker);
@@ -687,13 +740,15 @@ export class ThreeJSApp {
 			params: Record<string, unknown>,
 			onChange: (value: number) => void,
 		): void => {
-			const binding = (pane as unknown as {
-				addBinding: (
-					target: Record<string, number>,
-					property: string,
-					options: Record<string, unknown>,
-				) => { on: (eventName: string, handler: (event: { value: number }) => void) => void };
-			}).addBinding(this.simulationState, key as string, params);
+			const binding = (
+				pane as unknown as {
+					addBinding: (
+						target: Record<string, number>,
+						property: string,
+						options: Record<string, unknown>,
+					) => { on: (eventName: string, handler: (event: { value: number }) => void) => void };
+				}
+			).addBinding(this.simulationState, key as string, params);
 			binding.on("change", (event) => {
 				onChange(event.value);
 			});
