@@ -198,7 +198,6 @@ class CartPoleSimulator {
 	private readonly state: CartPoleState = { x: 0, xDot: 0, theta: 0, thetaDot: 0 };
 	private gravity: number;
 	private massCart: number;
-	private enablePolicy: boolean = true;
 	private readonly massPole: number;
 	private totalMass: number;
 	private halfPoleLength: number;
@@ -207,6 +206,8 @@ class CartPoleSimulator {
 	private readonly tau: number;
 	private readonly thetaThresholdRadians: number;
 	private readonly maxEpisodeSteps: number;
+	private readonly cartLinearDamping: number;
+	private readonly poleAngularDamping: number;
 	private nudgeAngleImpulse: number;
 	private nudgeAngularVelocityImpulse: number;
 	private nudgeCartVelocityImpulse: number;
@@ -214,6 +215,7 @@ class CartPoleSimulator {
 	private appliedForce = 0;
 	private stepsSinceReset = 0;
 	private resetFlag = false;
+	private enablePolicy: boolean;
 
 	constructor(simulation: SimulationConfig) {
 		this.gravity = simulation.physics.gravity;
@@ -226,11 +228,14 @@ class CartPoleSimulator {
 		this.tau = simulation.physics.timeStep;
 		this.thetaThresholdRadians = (simulation.physics.thetaThresholdDegrees * Math.PI) / 180;
 		this.maxEpisodeSteps = simulation.physics.maxEpisodeSteps;
+		this.cartLinearDamping = Math.max(simulation.airResistance.cartLinear, 0);
+		this.poleAngularDamping = Math.max(simulation.airResistance.poleAngular, 0);
 		this.nudgeAngleImpulse = THREE.MathUtils.degToRad(simulation.nudges.angleImpulseDegrees);
 		this.nudgeAngularVelocityImpulse = THREE.MathUtils.degToRad(
 			simulation.nudges.angularVelocityImpulseDegrees,
 		);
 		this.nudgeCartVelocityImpulse = simulation.nudges.cartVelocityImpulse;
+		this.enablePolicy = simulation.enablePolicy;
 		this.reset();
 	}
 
@@ -245,9 +250,6 @@ class CartPoleSimulator {
 		}
 		if (stepsPerformed > 0) {
 			this.stepsSinceReset += stepsPerformed;
-		}
-		if (this.hasEpisodeTerminated()) {
-			this.reset();
 		}
 		return { ...this.state };
 	}
@@ -319,13 +321,20 @@ class CartPoleSimulator {
 		this.state.xDot = xDot + this.tau * xAcc;
 		this.state.theta = theta + this.tau * thetaDot;
 		this.state.thetaDot = thetaDot + this.tau * thetaAcc;
+		this.applyAirResistance();
 	}
 
-	private hasEpisodeTerminated(): boolean {
-		return (
-			Math.abs(this.state.theta) > this.thetaThresholdRadians ||
-			this.stepsSinceReset >= this.maxEpisodeSteps
-		);
+	private applyAirResistance(): void {
+		const linearFactor = Math.max(0, 1 - this.cartLinearDamping * this.tau);
+		const angularFactor = Math.max(0, 1 - this.poleAngularDamping * this.tau);
+		this.state.xDot *= linearFactor;
+		this.state.thetaDot *= angularFactor;
+		if (Math.abs(this.state.xDot) < 1e-4) {
+			this.state.xDot = 0;
+		}
+		if (Math.abs(this.state.thetaDot) < 1e-4) {
+			this.state.thetaDot = 0;
+		}
 	}
 
 	public nudgePole(direction: number, strength: number = 1.0): void {
@@ -477,13 +486,15 @@ export class ThreeJSApp {
 		massCart: number;
 		enablePolicy: boolean;
 	};
-	private readonly nudgeCooldownMs = 1000;
+	private readonly buttonCooldownMs = 1000;
 	private leftNudgeButton?: HTMLButtonElement;
 	private rightNudgeButton?: HTMLButtonElement;
+	private resetButton?: HTMLButtonElement;
 	private leftNudgePointerHandler?: (event: PointerEvent) => void;
 	private rightNudgePointerHandler?: (event: PointerEvent) => void;
 	private leftNudgeClickHandler?: (event: MouseEvent) => void;
 	private rightNudgeClickHandler?: (event: MouseEvent) => void;
+	private resetButtonClickHandler?: (event: MouseEvent) => void;
 	private swallowClickHandler?: (event: MouseEvent) => void;
 	private readonly supportsPointerEvents =
 		typeof window !== "undefined" && window.PointerEvent !== undefined;
@@ -669,12 +680,22 @@ export class ThreeJSApp {
 	private setupOnScreenControls(): void {
 		const leftButton = document.querySelector<HTMLButtonElement>("[data-nudge='left']");
 		const rightButton = document.querySelector<HTMLButtonElement>("[data-nudge='right']");
+		const resetButton = document.querySelector<HTMLButtonElement>("[data-policy='reset']");
 		if (!leftButton || !rightButton) {
 			return;
 		}
 
 		this.leftNudgeButton = leftButton;
 		this.rightNudgeButton = rightButton;
+		if (resetButton) {
+			this.resetButton = resetButton;
+			this.resetButtonClickHandler = (event: MouseEvent) => {
+				event.preventDefault();
+				resetButton.blur();
+				this.handleManualReset();
+			};
+			resetButton.addEventListener("click", this.resetButtonClickHandler);
+		}
 
 		if (this.supportsPointerEvents) {
 			this.swallowClickHandler = (event: MouseEvent) => {
@@ -777,8 +798,20 @@ export class ThreeJSApp {
 		);
 
 		addCheckbox(pane, this.simulationState, "enablePolicy", { label: "Enable Policy" }, (value) => {
-			this.simulator.updateParameters({ enablePolicy: value });
+			this.simulationState.enablePolicy = value;
 		});
+	}
+
+	private handleManualReset(): void {
+		this.simulator.reset();
+		this.simulator.setForce(0);
+		this.policyActionPending = false;
+		for (const [button, timeoutId] of this.buttonCooldowns.entries()) {
+			window.clearTimeout(timeoutId);
+			button.disabled = false;
+			button.classList.remove("is-disabled");
+		}
+		this.buttonCooldowns.clear();
 	}
 
 	private handleNudge(baseDirection: -1 | 1, sourceButton?: HTMLButtonElement): void {
@@ -801,7 +834,7 @@ export class ThreeJSApp {
 			button.disabled = false;
 			button.classList.remove("is-disabled");
 			this.buttonCooldowns.delete(button);
-		}, this.nudgeCooldownMs);
+		}, this.buttonCooldownMs);
 		this.buttonCooldowns.set(button, timeoutId);
 	}
 
@@ -857,6 +890,13 @@ export class ThreeJSApp {
 	}
 
 	private teardownOnScreenControls(): void {
+		if (this.resetButton && this.resetButtonClickHandler) {
+			this.resetButton.removeEventListener("click", this.resetButtonClickHandler);
+		}
+		if (this.resetButton) {
+			this.resetButton.disabled = false;
+			this.resetButton.classList.remove("is-disabled");
+		}
 		if (this.leftNudgeButton) {
 			if (this.leftNudgePointerHandler) {
 				this.leftNudgeButton.removeEventListener("pointerdown", this.leftNudgePointerHandler);
@@ -885,10 +925,12 @@ export class ThreeJSApp {
 		}
 		this.leftNudgeButton = undefined;
 		this.rightNudgeButton = undefined;
+		this.resetButton = undefined;
 		this.leftNudgePointerHandler = undefined;
 		this.rightNudgePointerHandler = undefined;
 		this.leftNudgeClickHandler = undefined;
 		this.rightNudgeClickHandler = undefined;
+		this.resetButtonClickHandler = undefined;
 		this.swallowClickHandler = undefined;
 		for (const timeoutId of this.buttonCooldowns.values()) {
 			window.clearTimeout(timeoutId);

@@ -93,6 +93,11 @@ export interface SimulationPhysics {
 	readonly maxEpisodeSteps: number;
 }
 
+export interface SimulationAirResistance {
+	readonly cartLinear: number;
+	readonly poleAngular: number;
+}
+
 export interface SimulationNudge {
 	readonly angleImpulseDegrees: number;
 	readonly angularVelocityImpulseDegrees: number;
@@ -111,6 +116,7 @@ export interface SimulationConfig {
 	readonly physics: SimulationPhysics;
 	readonly nudges: SimulationNudge;
 	readonly indicators: SimulationIndicators;
+	readonly airResistance: SimulationAirResistance;
 	readonly enablePolicy: boolean;
 }
 
@@ -144,6 +150,10 @@ const simulationConfig: SimulationConfig = Object.freeze({
 		timeStep: 0.02,
 		thetaThresholdDegrees: 30,
 		maxEpisodeSteps: 1000,
+	},
+	airResistance: {
+		cartLinear: 0.75,
+		poleAngular: 1.1,
 	},
 	nudges: {
 		angleImpulseDegrees: 1.5,
