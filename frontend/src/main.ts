@@ -205,7 +205,6 @@ class CartPoleSimulator {
 	private readonly forceMag: number;
 	private readonly tau: number;
 	private readonly thetaThresholdRadians: number;
-	private readonly maxEpisodeSteps: number;
 	private readonly cartLinearDamping: number;
 	private readonly poleAngularDamping: number;
 	private nudgeAngleImpulse: number;
@@ -215,7 +214,6 @@ class CartPoleSimulator {
 	private appliedForce = 0;
 	private stepsSinceReset = 0;
 	private resetFlag = false;
-	private enablePolicy: boolean;
 
 	constructor(simulation: SimulationConfig) {
 		this.gravity = simulation.physics.gravity;
@@ -227,7 +225,6 @@ class CartPoleSimulator {
 		this.forceMag = simulation.physics.forceMagnitude;
 		this.tau = simulation.physics.timeStep;
 		this.thetaThresholdRadians = (simulation.physics.thetaThresholdDegrees * Math.PI) / 180;
-		this.maxEpisodeSteps = simulation.physics.maxEpisodeSteps;
 		this.cartLinearDamping = Math.max(simulation.airResistance.cartLinear, 0);
 		this.poleAngularDamping = Math.max(simulation.airResistance.poleAngular, 0);
 		this.nudgeAngleImpulse = THREE.MathUtils.degToRad(simulation.nudges.angleImpulseDegrees);
@@ -235,7 +232,6 @@ class CartPoleSimulator {
 			simulation.nudges.angularVelocityImpulseDegrees,
 		);
 		this.nudgeCartVelocityImpulse = simulation.nudges.cartVelocityImpulse;
-		this.enablePolicy = simulation.enablePolicy;
 		this.reset();
 	}
 
@@ -279,9 +275,6 @@ class CartPoleSimulator {
 			const clampedLength = Math.max(params.poleLength, 0.1);
 			this.halfPoleLength = clampedLength / 2;
 			this.poleMassLength = this.massPole * this.halfPoleLength;
-		}
-		if (typeof params.enablePolicy === "boolean") {
-			this.enablePolicy = params.enablePolicy;
 		}
 	}
 
